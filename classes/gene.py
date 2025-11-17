@@ -3,6 +3,14 @@ import ensembl_rest
 import mygene
 
 
+class Domain:
+    """
+    Domain object
+    """
+
+    def __init__(self):
+        pass
+
 class Transcript:
     """
     Transcript object
@@ -86,4 +94,5 @@ class Gene:
         uniprot_id = None
         if get_gene_result is not None and "uniprot" in get_gene_result:
             uniprot_id = get_gene_result["uniprot"]
+        print("No UniProt ID found for " + ensembl_id)
         return uniprot_id
