@@ -8,8 +8,12 @@ class Domain:
     Domain object
     """
 
-    def __init__(self):
-        pass
+    def __init__(self, interpro_id, start, end, source, classification = None):
+        self.interpro_id = interpro_id
+        self.classification = classification
+        self.start = start
+        self.end = end
+        self.source = source
 
 class Transcript:
     """
