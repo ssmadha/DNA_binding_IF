@@ -9,6 +9,7 @@ class TestGene(unittest.TestCase):
         self.assertGreater(len(self.test_gene.download_transcripts()), 0)
         self.assertIsNotNone(self.test_gene.uniprot_id)
         self.assertIsNotNone(self.test_gene.refseq_id)
+        self.assertIsNotNone(self.test_gene.symbol)
         self.assertGreater(self.test_gene.start_pos, 0)
         self.assertGreater(self.test_gene.end_pos, self.test_gene.start_pos)
         self.assertIn(self.test_gene.strand, [1, -1])
