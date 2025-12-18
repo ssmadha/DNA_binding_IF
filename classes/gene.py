@@ -4,7 +4,7 @@ import mygene
 import re
 
 import pandas as pd
-from Bio import Entrez, SeqIO
+from Bio import Entrez, SeqIO, SeqFeature
 
 
 class Domain:
