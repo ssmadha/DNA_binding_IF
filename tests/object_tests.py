@@ -2,7 +2,7 @@ import unittest
 import classes.gene as gene
 
 class TestGene(unittest.TestCase):
-    test_ensg_id = "ENSG00000004848"
+    test_ensg_id = "ENSG00000126456"
     test_gene = gene.Gene(test_ensg_id)
     def test_Gene_creation(self):
         self.assertEqual(self.test_ensg_id, self.test_gene.ensg_id)  # add assertion here

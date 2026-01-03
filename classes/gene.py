@@ -1,4 +1,6 @@
+from io import StringIO
 
+import biomart
 import ensembl_rest
 import mygene
 import re
@@ -89,9 +91,20 @@ class Gene:
         self.start_pos, self.end_pos, self.strand = self.check_positions()
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter)
         self.check_domain_redundancy()
-        self.superisoform_seq = self.generate_superisoform()
+        #self.superisoform_seq = self.generate_superisoform()
 
     def download_gene_info(self, ensg_id=None):
+        server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
+        mart = server.datasets['hsapiens_gene_ensembl']
+
+        attributes = ['ensembl_gene_id', 'ensembl_transcript_id', 'ensembl_peptide_id',
+                      'refseq_mrna', 'refseq_peptide']
+        response = mart.search({'attributes': attributes,
+                                'filters': {'ensembl_gene_id': "ENSG00000126456"}
+                                })
+        data = response.raw.data.decode('ascii')
+
+        id_df = pd.read_csv(StringIO(data), sep='\t')
         if ensg_id is None:
             ensg_id = self.ensg_id
         mg = mygene.MyGeneInfo()
