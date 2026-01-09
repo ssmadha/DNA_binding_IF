@@ -108,7 +108,7 @@ class Gene:
         self.start_pos, self.end_pos, self.strand = self.check_positions()
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter)
         self.check_domain_redundancy()
-        self.superisoform_seq = self.generate_superisoform()
+        self.superisoform_seq, self.superdomains = self.generate_superisoform()
 
     def download_gene_info(self, ensg_id=None):
         server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
@@ -212,10 +212,8 @@ class Gene:
                 currDomain = domain_queue.pop()
                 removeList = []
                 for i, domain in enumerate(domain_queue):
-                    if (currDomain.start <= domain.start and
-                        currDomain.end >= domain.start) or \
-                            (currDomain.start <= domain.end and
-                             currDomain.end >= domain.end) or \
+                    if (currDomain.start <= domain.start <= currDomain.end) or \
+                            (currDomain.start <= domain.end <= currDomain.end) or \
                             (currDomain.start >= domain.start and
                              currDomain.end <= domain.end):
                         if currDomain.end - currDomain.start < domain.end - domain.start:
@@ -289,15 +287,11 @@ class Gene:
                                     domain_start = domain.start
                                     domain_end = domain.end
                                 # domain starts in the exon, but ends after
-                                elif domain.start > exon_start and \
-                                        domain.start < exon_end and \
-                                        domain.end > exon_end:
+                                elif exon_start < domain.start < exon_end < domain.end:
                                     domain_start = domain.start
                                     domain_end = exon_end
                                 # domain starts before exon, but ends in
-                                elif domain.start < exon_start and \
-                                        domain.end > exon_start and \
-                                        domain.end < exon_end:
+                                elif domain.start < exon_start < domain.end < exon_end:
                                     domain_start = exon_start
                                     domain_end = domain.end
                                 # domain contains exon
@@ -398,5 +392,4 @@ class Gene:
             superisoform += reformed_exons[exon]['seq']
             # print(exon)
             # print(reformed_exons[exon]['seq'])
-        self.superisoform = superisoform
-        self.superdomains = superdomains
+        return superisoform, superdomains
