@@ -8,6 +8,7 @@ import re
 import pandas as pd
 from Bio import Entrez, SeqIO, SeqFeature
 
+Entrez.email = "smadha@wpi.edu"
 
 class Domain:
     """
@@ -109,21 +110,25 @@ class Gene:
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter)
         self.check_domain_redundancy()
         self.superisoform_seq, self.superdomains = self.generate_superisoform()
+        print(self.superisoform_seq)
+        print(self.superdomains)
 
     def download_gene_info(self, ensg_id=None):
-        server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
-        mart = server.datasets['hsapiens_gene_ensembl']
-
-        attributes = ['ensembl_gene_id', 'ensembl_transcript_id', 'ensembl_peptide_id',
-                      'refseq_mrna', 'refseq_peptide']
-        response = mart.search({'attributes': attributes,
-                                'filters': {'ensembl_gene_id': "ENSG00000126456"}
-                                })
-        data = response.raw.data.decode('ascii')
-
-        id_df = pd.read_csv(StringIO(data), sep='\t')
         if ensg_id is None:
             ensg_id = self.ensg_id
+
+        # server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
+        # mart = server.datasets['hsapiens_gene_ensembl']
+        #
+        # attributes = ['ensembl_gene_id', 'ensembl_transcript_id', 'ensembl_peptide_id',
+        #               'refseq_mrna', 'refseq_peptide']
+        # response = mart.search({'attributes': attributes,
+        #                         'filters': {'ensembl_gene_id': ensg_id}
+        #                         })
+        # data = response.raw.data.decode('ascii')
+        #
+        # id_df = pd.read_csv(StringIO(data), sep='\t')
+
         mg = mygene.MyGeneInfo()
         get_gene_result = mg.getgene(ensg_id)
         return get_gene_result
@@ -162,7 +167,6 @@ class Gene:
         if ensg_id is None:
             ensg_id = self.ensg_id
         gene_info = self.gene_info
-        print(gene_info['refseq'])
         uniprot_id = None
         refseq_id = None
         symbol = None
@@ -170,7 +174,7 @@ class Gene:
             if "uniprot" in gene_info:
                 uniprot_id = gene_info["uniprot"]
             if "refseq" in gene_info:
-                refseq_id = list(filter(re.compile("NG_.*").match, gene_info["refseq"]["genomic"][0]))
+                refseq_id = gene_info["refseq"]["genomic"][0]
             if "symbol" in gene_info:
                 symbol = gene_info["symbol"]
         if uniprot_id is None:
@@ -235,9 +239,6 @@ class Gene:
         start_pos = self.start_pos
         end_pos = self.end_pos
         strand = self.strand
-        print(refseq_id)
-        print(start_pos)
-        print(end_pos)
         handle = Entrez.efetch(db="nucleotide",
                                id=refseq_id,
                                seq_start=start_pos,
