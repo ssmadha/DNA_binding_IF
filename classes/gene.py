@@ -1,5 +1,6 @@
 from io import StringIO
 
+import Bio.SeqFeature
 import biomart
 import ensembl_rest
 import mygene
@@ -15,12 +16,16 @@ class Domain:
     Domain object
     """
 
-    def __init__(self, interpro_id, start, end, source, **kwargs):
+    def __init__(self, interpro_id, start, end, source, pos=None, **kwargs):
         self.interpro_id = interpro_id
         self.start = start
         self.end = end
         self.source = source
         self.types = self.determine_types()
+        if pos is None:
+            self.pos = Bio.SeqFeature.SeqFeature(Bio.SeqFeature.FeatureLocation(start, end))
+        else:
+            self.pos = pos
 
     def determine_types(self):
         types = []
@@ -53,8 +58,10 @@ class Transcript:
         self.enst_id = enst_id
         self.ensp_id = ensp_id
         self.refseq_id = self.get_refseq_id()
+        self.uniprot_id = self.get_uniprot_id()
         self.seq = self.download_sequence()
         self.domains = self.download_domains()
+        self.yue_ppi_locations()
 
     def download_sequence(self, enst_id=None):
         if enst_id==None:
@@ -70,13 +77,49 @@ class Transcript:
         #print(results)
         return [Domain(interpro_id=res["interpro"], source = res["type"], **res) for res in results]
 
+    def yue_ppi_locations(self):
+        if self.uniprot_id is None:
+            return
+        if self.domains is None:
+            domains = []
+        else:
+            domains = self.domains
+        yue_ppi_df = pd.read_csv("result_df.tsv", sep='\t',  header=0)
+        for contact in [loc[2:-2].split("), (")
+                        for loc in pd.concat([yue_ppi_df.loc[yue_ppi_df["protein_I_II"].str.startswith(self.uniprot_id),"contact_A"],
+                                              yue_ppi_df.loc[yue_ppi_df["protein_I_II"].str.endswith(self.uniprot_id), "contact_B"]])]:
+            locs = [Bio.SeqFeature.FeatureLocation(int(loc.split(", ")[0]), int(loc.split(", ")[1]))
+                    for loc in contact]
+            if len(locs) == 1:
+                domains.append(Domain(interpro_id=None, source="Yue", start=locs[0].start, end=locs[0].end, pos=locs[0]))
+            else:
+                domains.append(Domain(interpro_id=None, source="Yue", start=locs[0].start, end=locs[-1].end,
+                                      pos=Bio.SeqFeature.CompoundLocation(locs)))
+
+        # print(domains)
+        self.domains = domains
+
     def get_refseq_id(self):
         try:
             server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
             mart = server.datasets['hsapiens_gene_ensembl']
             attributes = ['refseq_peptide']
             response = mart.search({'attributes': attributes,
-                                    'filters': {'ensembl_peptide_id': self.enst_id}
+                                    'filters': {'ensembl_peptide_id': self.ensp_id}
+                                    })
+            data = response.raw.data.decode('ascii')
+            # print(data.strip())
+            return data.strip()
+        except:
+            return None
+
+    def get_uniprot_id(self):
+        try:
+            server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
+            mart = server.datasets['hsapiens_gene_ensembl']
+            attributes = ['uniprotswissprot']
+            response = mart.search({'attributes': attributes,
+                                    'filters': {'ensembl_peptide_id': self.ensp_id}
                                     })
             data = response.raw.data.decode('ascii')
             print(data.strip())
@@ -207,7 +250,7 @@ class Gene:
                 if transcript.refseq_id is None:
                     continue
                 domain_queue += [domain for domain in transcript.domains
-                                 if domain.source == 'SuperFamily' and \
+                                 if domain.source in ['SuperFamily', 'Yue'] and \
                                  domain.interpro_id != '' and \
                                  classification in domain.types]
             # print("domain_queue:")
@@ -256,8 +299,10 @@ class Gene:
                     if transcript.refseq_id is None:
                         break
                     these_domains = []
-                    if transcript.refseq_id== refseq_id:
+                    # print(transcript.refseq_id, refseq_id)
+                    if transcript.refseq_id in refseq_id:
                         these_domains = transcript.filtered_domains
+
                     parts = enumerate(feature.location.parts)
                     prepend_seq = ""
                     exon_start = 0
@@ -385,10 +430,10 @@ class Gene:
                     domain_end = int(domain.split(".")[1]) - int(domain.split(".")[0]) + domain_start
                     # print(reformed_exons[exon]['domains'][domain]['seq_region_name'], domain_start, domain_end)
                     if str(reformed_exons[exon]['domains'][domain]) not in superdomains:
-                        superdomains[str(reformed_exons[exon]['domains'][domain]['interpro'])] = \
+                        superdomains[str(reformed_exons[exon]['domains'][domain].interpro_id)] = \
                             SeqFeature.FeatureLocation(domain_start, domain_end)
                     else:
-                        superdomains[str(reformed_exons[exon]['domains'][domain]['interpro'])] += \
+                        superdomains[str(reformed_exons[exon]['domains'][domain].interpro_id)] += \
                             SeqFeature.FeatureLocation(domain_start, domain_end)
             superisoform += reformed_exons[exon]['seq']
             # print(exon)
