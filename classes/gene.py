@@ -11,6 +11,8 @@ from Bio import Entrez, SeqIO, SeqFeature
 
 Entrez.email = "smadha@wpi.edu"
 
+yue_ppi_df = pd.read_csv("/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/result_df.tsv", sep='\t', header=0)
+
 class Domain:
     """
     Domain object
@@ -57,16 +59,22 @@ class Transcript:
         self.gene = gene
         self.enst_id = enst_id
         self.ensp_id = ensp_id
+        print("Ensembl ID: " + self.enst_id)
         self.refseq_id = self.get_refseq_id()
+        print("RefSeq ID: " + str(self.refseq_id))
         self.uniprot_id = self.get_uniprot_id()
+        print("UniProt ID: " + str(self.uniprot_id))
         self.seq = self.download_sequence()
+        print("Sequence: " + self.seq)
         self.domains = self.download_domains()
+        print("Domains: " + str(self.domains))
         self.yue_ppi_locations()
+        print(len(self.domains))
 
     def download_sequence(self, enst_id=None):
         if enst_id==None:
             enst_id = self.enst_id
-        seq = ensembl_rest.sequence_id(enst_id)
+        seq = ensembl_rest.sequence_id(enst_id)["seq"]
         return seq
 
     def download_domains(self, ensp_id=None):
@@ -77,6 +85,38 @@ class Transcript:
         #print(results)
         return [Domain(interpro_id=res["interpro"], source = res["type"], **res) for res in results]
 
+    def get_refseq_id(self):
+        try:
+            server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
+            mart = server.datasets['hsapiens_gene_ensembl']
+            attributes = ['refseq_peptide']
+            response = mart.search({'attributes': attributes,
+                                    'filters': {'ensembl_peptide_id': self.ensp_id}
+                                    })
+            data = response.raw.data.decode('ascii')
+            # print(data.strip())
+            if data.strip()=="":
+                return None
+            return data.strip()
+        except:
+            return None
+
+    def get_uniprot_id(self):
+        try:
+            server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
+            mart = server.datasets['hsapiens_gene_ensembl']
+            attributes = ['uniprotswissprot']
+            response = mart.search({'attributes': attributes,
+                                    'filters': {'ensembl_peptide_id': self.ensp_id}
+                                    })
+            data = response.raw.data.decode('ascii')
+            # print(data.strip())
+            if data.strip()=="":
+                return None
+            return data.strip()
+        except:
+            return None
+
     def yue_ppi_locations(self):
         if self.uniprot_id is None:
             return
@@ -84,7 +124,6 @@ class Transcript:
             domains = []
         else:
             domains = self.domains
-        yue_ppi_df = pd.read_csv("result_df.tsv", sep='\t',  header=0)
         for contact in [loc[2:-2].split("), (")
                         for loc in pd.concat([yue_ppi_df.loc[yue_ppi_df["protein_I_II"].str.startswith(self.uniprot_id),"contact_A"],
                                               yue_ppi_df.loc[yue_ppi_df["protein_I_II"].str.endswith(self.uniprot_id), "contact_B"]])]:
@@ -99,33 +138,6 @@ class Transcript:
         # print(domains)
         self.domains = domains
 
-    def get_refseq_id(self):
-        try:
-            server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
-            mart = server.datasets['hsapiens_gene_ensembl']
-            attributes = ['refseq_peptide']
-            response = mart.search({'attributes': attributes,
-                                    'filters': {'ensembl_peptide_id': self.ensp_id}
-                                    })
-            data = response.raw.data.decode('ascii')
-            # print(data.strip())
-            return data.strip()
-        except:
-            return None
-
-    def get_uniprot_id(self):
-        try:
-            server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
-            mart = server.datasets['hsapiens_gene_ensembl']
-            attributes = ['uniprotswissprot']
-            response = mart.search({'attributes': attributes,
-                                    'filters': {'ensembl_peptide_id': self.ensp_id}
-                                    })
-            data = response.raw.data.decode('ascii')
-            print(data.strip())
-            return data.strip()
-        except:
-            return None
 
 class Gene:
     """
@@ -150,8 +162,11 @@ class Gene:
         self.gene_info = self.download_gene_info()
         self.uniprot_id, self.refseq_id, self.symbol = self.check_alternate_id()
         self.start_pos, self.end_pos, self.strand = self.check_positions()
+        print("downloading transcripts")
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter)
+        print("checking redundancy")
         self.check_domain_redundancy()
+        print("generating superisoform")
         self.superisoform_seq, self.superdomains = self.generate_superisoform()
         print(self.superisoform_seq)
         print(self.superdomains)
