@@ -11,7 +11,7 @@ from Bio import Entrez, SeqIO, SeqFeature
 
 Entrez.email = "smadha@wpi.edu"
 
-yue_ppi_df = pd.read_csv("/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/result_df.tsv", sep='\t', header=0)
+yue_ppi_df = pd.read_csv("/home/shariq/Documents/WPI/Korkin_Lab/DNA_binding_IF/result_df.tsv", sep='\t', header=0)
 
 class Domain:
     """
