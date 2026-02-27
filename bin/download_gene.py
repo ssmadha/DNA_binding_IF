@@ -9,4 +9,3 @@ if __name__ == "__main__":
     print(argv[1])
     if argv[1].startswith("ENSG"):
         test_gene = gene.Gene(argv[1])
-        print(test_gene.superisoform_seq)

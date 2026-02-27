@@ -1,7 +1,5 @@
 #!/bin/bash
 
-cd ../../
-
 while read -r ensg_id ;
 do
   python -m TF_ASIF.download_gene "$ensg_id"

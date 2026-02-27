@@ -1,17 +1,22 @@
+import random
 from io import StringIO
 
 import Bio.SeqFeature
 import biomart
 import ensembl_rest
 import mygene
-import re
 
 import pandas as pd
-from Bio import Entrez, SeqIO, SeqFeature
+from Bio import Entrez, SeqIO, SeqFeature, Align
+from Bio.SeqFeature import SimpleLocation
+from numpy.ma.core import mean
 
 Entrez.email = "smadha@wpi.edu"
 
-yue_ppi_df = pd.read_csv("/home/shariq/Documents/WPI/Korkin_Lab/DNA_binding_IF/result_df.tsv", sep='\t', header=0)
+server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
+mart = server.datasets['hsapiens_gene_ensembl']
+
+yue_ppi_df = pd.read_csv("/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/result_df.tsv", sep='\t', header=0)
 
 class Domain:
     """
@@ -34,17 +39,20 @@ class Domain:
         if self.determine_dna_binding():
             types.append("DNA-binding")
         if self.determine_protein_interaction():
-            types.append("Protein-interaction")
+            types.append("PPI")
         return types
 
     def determine_dna_binding(self, dna_binding_file="interpro_superfamily_domains_DBD.tsv"):
-        interpro_superfamily_domains_DBD = pd.read_csv("interpro_superfamily_domains_DBD.tsv", sep='\t', index_col=0)
+        interpro_superfamily_domains_DBD = pd.read_csv("/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/interpro_superfamily_domains_DBD.tsv", sep='\t', index_col=0)
         if self.interpro_id is None or self.source!="SuperFamily":
             return False
         return interpro_superfamily_domains_DBD.loc[self.interpro_id,"DNA-binding"]
 
     def determine_protein_interaction(self):
         return False
+
+    def __repr__(self):
+        return "Interpro ID %s at %s of types %s" % (self.interpro_id, self.pos, self.types)
 
 
 class Transcript:
@@ -53,28 +61,28 @@ class Transcript:
     """
     seq = None
     uniprot_id = None
-    domains = None
+    domains = []
 
     def __init__(self, gene, enst_id: str, ensp_id: str):
         self.gene = gene
         self.enst_id = enst_id
         self.ensp_id = ensp_id
-        print("Ensembl ID: " + self.enst_id)
+        # print("Ensembl ID: " + self.enst_id)
         self.refseq_id = self.get_refseq_id()
-        print("RefSeq ID: " + str(self.refseq_id))
+        # print("RefSeq ID: " + str(self.refseq_id))
         self.uniprot_id = self.get_uniprot_id()
-        print("UniProt ID: " + str(self.uniprot_id))
+        # print("UniProt ID: " + str(self.uniprot_id))
         self.seq = self.download_sequence()
-        print("Sequence: " + self.seq)
-        self.domains = self.download_domains()
-        print("Domains: " + str(self.domains))
+        #print("Sequence: " + self.seq)
+        #self.domains = self.download_domains()
+        #print("Domains: " + str(self.domains))
         self.yue_ppi_locations()
-        print(len(self.domains))
+        #print(len(self.domains))
 
-    def download_sequence(self, enst_id=None):
-        if enst_id==None:
-            enst_id = self.enst_id
-        seq = ensembl_rest.sequence_id(enst_id)["seq"]
+    def download_sequence(self, ensp_id=None):
+        if ensp_id==None:
+            ensp_id = self.ensp_id
+        seq = ensembl_rest.sequence_id(ensp_id)["seq"]
         return seq
 
     def download_domains(self, ensp_id=None):
@@ -87,8 +95,6 @@ class Transcript:
 
     def get_refseq_id(self):
         try:
-            server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
-            mart = server.datasets['hsapiens_gene_ensembl']
             attributes = ['refseq_peptide']
             response = mart.search({'attributes': attributes,
                                     'filters': {'ensembl_peptide_id': self.ensp_id}
@@ -103,8 +109,6 @@ class Transcript:
 
     def get_uniprot_id(self):
         try:
-            server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
-            mart = server.datasets['hsapiens_gene_ensembl']
             attributes = ['uniprotswissprot']
             response = mart.search({'attributes': attributes,
                                     'filters': {'ensembl_peptide_id': self.ensp_id}
@@ -130,14 +134,47 @@ class Transcript:
             locs = [Bio.SeqFeature.FeatureLocation(int(loc.split(", ")[0]), int(loc.split(", ")[1]))
                     for loc in contact]
             if len(locs) == 1:
-                domains.append(Domain(interpro_id=None, source="Yue", start=locs[0].start, end=locs[0].end, pos=locs[0]))
+                domains.append(Domain(interpro_id="Yue" + str(random.randint(0, 9999)), source="Yue", start=locs[0].start, end=locs[0].end, pos=locs[0]))
             else:
-                domains.append(Domain(interpro_id=None, source="Yue", start=locs[0].start, end=locs[-1].end,
+                domains.append(Domain(interpro_id="Yue" + str(random.randint(0, 9999)), source="Yue", start=locs[0].start, end=locs[-1].end,
                                       pos=Bio.SeqFeature.CompoundLocation(locs)))
-
-        # print(domains)
+        for domain in domains:
+            domain.types=["PPI"]
         self.domains = domains
 
+    def align_superisoform(self):
+        aligner = Align.PairwiseAligner()
+        aligner.match_score = 10
+        aligner.mismatch_score = -15
+        aligner.target_open_gap_score = -20
+        aligner.target_extend_gap_score = -20
+        aligner.query_open_gap_score = -25
+        aligner.query_extend_gap_score = 0
+        aligner.mode = "global"
+        superisoform_seq = self.gene.superisoform_seq
+        # print(superisoform_seq)
+        transcript_seq = self.seq
+        #print(transcript_seq)
+        alignments = aligner.align(superisoform_seq, transcript_seq)
+        superdomains = self.gene.superdomains
+        #print([domain.pos for domain in superdomains])
+
+        isoform_coverage_percentages = {}
+        for i in range(len(alignments)):
+            for domain in superdomains:
+                domain_query = domain.pos.extract("".join([alignments[i].query[j] if j!=-1 else "-" for j in alignments[i].indices[1]]))
+                # print(domain_query)
+                # print(len(domain_query))
+                # print(alignments[i].counts())
+                overlap_perc = 1 - domain_query.count("-") / len(domain_query)
+                if domain.interpro_id not in isoform_coverage_percentages or \
+                        isoform_coverage_percentages[domain.interpro_id] < overlap_perc:
+                    # print(alignments[i])
+                    isoform_coverage_percentages[domain.interpro_id] = overlap_perc
+        print(self.gene.ensg_id)
+        print(self.enst_id)
+        print(len(isoform_coverage_percentages))
+        print(list(isoform_coverage_percentages.values()))
 
 class Gene:
     """
@@ -161,15 +198,20 @@ class Gene:
         self.ensg_id = ensg_id
         self.gene_info = self.download_gene_info()
         self.uniprot_id, self.refseq_id, self.symbol = self.check_alternate_id()
+        if self.refseq_id is None:
+            return
         self.start_pos, self.end_pos, self.strand = self.check_positions()
-        print("downloading transcripts")
+        # print("downloading transcripts")
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter)
-        print("checking redundancy")
+        # print("checking redundancy")
         self.check_domain_redundancy()
-        print("generating superisoform")
+        # print("generating superisoform")
         self.superisoform_seq, self.superdomains = self.generate_superisoform()
-        print(self.superisoform_seq)
-        print(self.superdomains)
+        # print(self.superisoform_seq)
+        # print(self.superdomains)
+        # print("aligning to superisoform")
+        for transcript in self.transcripts:
+            transcript.align_superisoform()
 
     def download_gene_info(self, ensg_id=None):
         if ensg_id is None:
@@ -217,8 +259,14 @@ class Gene:
         for isoform in isoforms["Transcript"]:
             if isoform['biotype'] not in biotype_filter:
                 continue
-            transcript = Transcript(self, isoform['id'], isoform['Translation']['id'])
-            transcripts.append(transcript)
+            try:
+                transcript = Transcript(self, isoform['id'], isoform['Translation']['id'])
+                if transcript.refseq_id is not None and transcript.uniprot_id is not None:
+                    transcript.seq = transcript.download_sequence()
+                    transcript.yue_ppi_locations()
+                    transcripts.append(transcript)
+            except:
+                print("Error getting transcript: " + isoform['id'])
         return transcripts
 
     def check_alternate_id(self, ensg_id = None):
@@ -246,9 +294,16 @@ class Gene:
     def check_positions(self):
         gene_info = self.gene_info
         if type(gene_info['genomic_pos']) is list:
-            start_pos = gene_info['genomic_pos'][0]['start']
-            end_pos = gene_info['genomic_pos'][0]['end']
-            strand = gene_info['genomic_pos'][0]['strand']
+            i=0
+            while i < len(gene_info['genomic_pos']):
+                if gene_info['genomic_pos'][i]['ensemblgene']==self.ensg_id:
+                    break
+                i+=1
+            if i==len(gene_info['genomic_pos']):
+                i=0
+            start_pos = gene_info['genomic_pos'][i]['start']
+            end_pos = gene_info['genomic_pos'][i]['end']
+            strand = gene_info['genomic_pos'][i]['strand']
         else:
             start_pos = gene_info['genomic_pos']['start']
             end_pos = gene_info['genomic_pos']['end']
@@ -261,12 +316,11 @@ class Gene:
         keeping_domains = []
         for classification in ["DNA-binding", "PPI"]:
             domain_queue = []
-            for transcript in self.transcripts:
+            for transcript in transcripts:
                 if transcript.refseq_id is None:
                     continue
                 domain_queue += [domain for domain in transcript.domains
                                  if domain.source in ['SuperFamily', 'Yue'] and \
-                                 domain.interpro_id != '' and \
                                  classification in domain.types]
             # print("domain_queue:")
             # print(domain_queue)
@@ -285,8 +339,8 @@ class Gene:
                     del domain_queue[i]
                 currDomain.prot_id = transcript.refseq_id
                 keeping_domains.append(currDomain)
-        # print("keeping_domains:")
-        # print(keeping_domains)
+        print("keeping_domains:")
+        print(keeping_domains)
         for transcript in self.transcripts:
             transcript.filtered_domains = \
                 [domain for domain in keeping_domains if domain.prot_id == transcript.refseq_id]
@@ -310,9 +364,10 @@ class Gene:
             if feature.type == "CDS" and symbol in feature.qualifiers['gene']:
                 # print(feature)
                 refseq_id = feature.qualifiers['protein_id'][0]
+                # print(self.transcripts)
                 for transcript in self.transcripts:
-                    if transcript.refseq_id is None:
-                        break
+                    # if transcript.refseq_id is None:
+                    #     break
                     these_domains = []
                     # print(transcript.refseq_id, refseq_id)
                     if transcript.refseq_id in refseq_id:
@@ -340,34 +395,64 @@ class Gene:
                             exon_start = exon_end
                             exon_end = exon_start + exon_len
                             for domain in these_domains:
-                                domain_start = None
-                                domain_end = None
-                                # domain in the exon
-                                if domain.start > exon_start and \
-                                        domain.end < exon_end:
-                                    domain_start = domain.start
-                                    domain_end = domain.end
-                                # domain starts in the exon, but ends after
-                                elif exon_start < domain.start < exon_end < domain.end:
-                                    domain_start = domain.start
-                                    domain_end = exon_end
-                                # domain starts before exon, but ends in
-                                elif domain.start < exon_start < domain.end < exon_end:
-                                    domain_start = exon_start
-                                    domain_end = domain.end
-                                # domain contains exon
-                                elif domain.start < exon_start and \
-                                        domain.end > exon_end:
-                                    domain_start = exon_start
-                                    domain_end = exon_end
-                                if domain_start is not None:
-                                    # print(domain)
-                                    # print(domain.start, exon_start, domain_start, domain.start - exon_start)
-                                    # print(domain.end, exon_end, domain_end, exon_end - domain.end)
-                                    exon_domains[".".join([str(domain_start),
-                                                           str(domain_end),
-                                                           str(max(domain.start - exon_start, 0)),
-                                                           str(max(exon_end - domain.end, 0))])] = domain
+                                if type(domain.pos)==SimpleLocation:
+                                    domain_start = None
+                                    domain_end = None
+                                    # domain in the exon
+                                    if domain.start > exon_start and \
+                                            domain.end < exon_end:
+                                        domain_start = domain.start
+                                        domain_end = domain.end
+                                    # domain starts in the exon, but ends after
+                                    elif exon_start < domain.start < exon_end < domain.end:
+                                        domain_start = domain.start
+                                        domain_end = exon_end
+                                    # domain starts before exon, but ends in
+                                    elif domain.start < exon_start < domain.end < exon_end:
+                                        domain_start = exon_start
+                                        domain_end = domain.end
+                                    # domain contains exon
+                                    elif domain.start < exon_start and \
+                                            domain.end > exon_end:
+                                        domain_start = exon_start
+                                        domain_end = exon_end
+                                    if domain_start is not None:
+                                        # print(domain)
+                                        # print(domain.start, exon_start, domain_start, domain.start - exon_start)
+                                        # print(domain.end, exon_end, domain_end, exon_end - domain.end)
+                                        exon_domains[".".join([str(domain_start),
+                                                               str(domain_end),
+                                                               str(max(domain.start - exon_start, 0)),
+                                                               str(max(exon_end - domain.end, 0))])] = domain
+                                else:
+                                    domain_start = None
+                                    domain_end = None
+                                    # domain in the exon
+                                    if domain.start > exon_start and \
+                                            domain.end < exon_end:
+                                        domain_start = domain.start
+                                        domain_end = domain.end
+                                    # domain starts in the exon, but ends after
+                                    elif exon_start < domain.start < exon_end < domain.end:
+                                        domain_start = domain.start
+                                        domain_end = exon_end
+                                    # domain starts before exon, but ends in
+                                    elif domain.start < exon_start < domain.end < exon_end:
+                                        domain_start = exon_start
+                                        domain_end = domain.end
+                                    # domain contains exon
+                                    elif domain.start < exon_start and \
+                                            domain.end > exon_end:
+                                        domain_start = exon_start
+                                        domain_end = exon_end
+                                    if domain_start is not None:
+                                        # print(domain)
+                                        # print(domain.start, exon_start, domain_start, domain.start - exon_start)
+                                        # print(domain.end, exon_end, domain_end, exon_end - domain.end)
+                                        exon_domains[".".join([str(domain_start),
+                                                               str(domain_end),
+                                                               str(max(domain.start - exon_start, 0)),
+                                                               str(max(exon_end - domain.end, 0))])] = domain
                         elif location.strand == -1:
                             this_location = SeqFeature.FeatureLocation(
                                 location.start + tail_len,
@@ -381,34 +466,65 @@ class Gene:
                             exon_start = exon_end
                             exon_end = exon_start + exon_len
                             for domain in these_domains:
-                                domain_start = None
-                                domain_end = None
-                                # domain in the exon
-                                if domain.start > exon_start and \
-                                        domain.end < exon_end:
-                                    domain_start = domain.start
-                                    domain_end = domain.end
-                                # domain starts in the exon, but ends after
-                                elif exon_start < domain.start < exon_end < domain.end:
-                                    domain_start = domain.start
-                                    domain_end = exon_end
-                                # domain starts before exon, but ends in
-                                elif domain.start < exon_start < domain.end < exon_end:
-                                    domain_start = exon_start
-                                    domain_end = domain.end
-                                # domain contains exon
-                                elif domain.start < exon_start and \
-                                        domain.end > exon_end:
-                                    domain_start = exon_start
-                                    domain_end = exon_end
-                                if domain_start is not None:
-                                    # print(domain)
-                                    # print(domain.start, exon_start, domain_start, domain.start - exon_start)
-                                    # print(domain.end, exon_end, domain_end, exon_end - domain.end)
-                                    exon_domains[".".join([str(domain_start).strip("<>"),
-                                                           str(domain_end).strip("<>"),
-                                                           str(max(domain.start - exon_start, 0)).strip("<>"),
-                                                           str(max(exon_end - domain.end, 0)).strip("<>")])] = domain
+                                if type(domain.pos) == SimpleLocation:
+                                    domain_start = None
+                                    domain_end = None
+                                    # domain in the exon
+                                    if domain.start > exon_start and \
+                                            domain.end < exon_end:
+                                        domain_start = domain.start
+                                        domain_end = domain.end
+                                    # domain starts in the exon, but ends after
+                                    elif exon_start < domain.start < exon_end < domain.end:
+                                        domain_start = domain.start
+                                        domain_end = exon_end
+                                    # domain starts before exon, but ends in
+                                    elif domain.start < exon_start < domain.end < exon_end:
+                                        domain_start = exon_start
+                                        domain_end = domain.end
+                                    # domain contains exon
+                                    elif domain.start < exon_start and \
+                                            domain.end > exon_end:
+                                        domain_start = exon_start
+                                        domain_end = exon_end
+                                    if domain_start is not None:
+                                        # print(domain)
+                                        # print(domain.start, exon_start, domain_start, domain.start - exon_start)
+                                        # print(domain.end, exon_end, domain_end, exon_end - domain.end)
+                                        exon_domains[".".join([str(domain_start).strip("<>"),
+                                                               str(domain_end).strip("<>"),
+                                                               str(max(domain.start - exon_start, 0)).strip("<>"),
+                                                               str(max(exon_end - domain.end, 0)).strip("<>")])] = domain
+                                else:
+                                    domain_start = None
+                                    domain_end = None
+                                    # domain in the exon
+                                    if domain.start > exon_start and \
+                                            domain.end < exon_end:
+                                        domain_start = domain.start
+                                        domain_end = domain.end
+                                    # domain starts in the exon, but ends after
+                                    elif exon_start < domain.start < exon_end < domain.end:
+                                        domain_start = domain.start
+                                        domain_end = exon_end
+                                    # domain starts before exon, but ends in
+                                    elif domain.start < exon_start < domain.end < exon_end:
+                                        domain_start = exon_start
+                                        domain_end = domain.end
+                                    # domain contains exon
+                                    elif domain.start < exon_start and \
+                                            domain.end > exon_end:
+                                        domain_start = exon_start
+                                        domain_end = exon_end
+                                    if domain_start is not None:
+                                        # print(domain)
+                                        # print(domain.start, exon_start, domain_start, domain.start - exon_start)
+                                        # print(domain.end, exon_end, domain_end, exon_end - domain.end)
+                                        exon_domains[".".join([str(domain_start).strip("<>"),
+                                                               str(domain_end).strip("<>"),
+                                                               str(max(domain.start - exon_start, 0)).strip("<>"),
+                                                               str(max(exon_end - domain.end, 0)).strip("<>")])] = domain
+
                         exon_key = ".".join([str(location.start).strip("<>"),
                                              str(location.end).strip("<>"),
                                              prepend_seq,
@@ -436,7 +552,7 @@ class Gene:
         # print(tmp)
         if strand == -1:
             tmp = tmp[::-1]
-        superdomains = {}
+        superdomains = []
         for exon in tmp:
             if len(reformed_exons[exon]['domains']) > 0:
                 # print(reformed_exons[exon]['domains'])
@@ -444,12 +560,8 @@ class Gene:
                     domain_start = int(domain.split(".")[2]) + len(superisoform)
                     domain_end = int(domain.split(".")[1]) - int(domain.split(".")[0]) + domain_start
                     # print(reformed_exons[exon]['domains'][domain]['seq_region_name'], domain_start, domain_end)
-                    if str(reformed_exons[exon]['domains'][domain]) not in superdomains:
-                        superdomains[str(reformed_exons[exon]['domains'][domain].interpro_id)] = \
-                            SeqFeature.FeatureLocation(domain_start, domain_end)
-                    else:
-                        superdomains[str(reformed_exons[exon]['domains'][domain].interpro_id)] += \
-                            SeqFeature.FeatureLocation(domain_start, domain_end)
+                    superdomains.append(Domain(interpro_id="SD" + str(random.randint(0, 9999)), source="Yue", start=domain_start,
+                           end=domain_end, pos=SeqFeature.FeatureLocation(domain_start, domain_end+1)))
             superisoform += reformed_exons[exon]['seq']
             # print(exon)
             # print(reformed_exons[exon]['seq'])
