@@ -6,8 +6,9 @@ process DOWNLOAD_GENE {
 
     time '15m'
     errorStrategy 'ignore'
+    maxRetries 2
 
-    publishDir "results", mode: 'copy'
+    publishDir "results/individual", mode: 'copy'
 
     conda "/home/shariq/anaconda3/envs/DNA_Binding_IF"
 
@@ -15,7 +16,7 @@ process DOWNLOAD_GENE {
     val gene_name
 
     output:
-    path "${gene_name}.txt"
+    tuple val(gene_name), path("${gene_name}.txt")
 
     script:
     """
@@ -39,6 +40,22 @@ process COMBINE_GENES {
     """
 }
 
+process LOG_FAILURES {
+
+    publishDir "results", mode: 'copy'
+
+    input:
+    val failed_list
+
+    output:
+    path "failed_genes.txt"
+
+    script:
+    """
+    printf "%s\n" ${failed_list.join(' ')} > failed_genes.txt
+    """
+}
+
 workflow {
 
     genes = Channel
@@ -47,8 +64,20 @@ workflow {
         .map { it.trim() }
         .filter { it }
 
-
     gene_outputs = DOWNLOAD_GENE(genes)
 
-    COMBINE_GENES(gene_outputs.collect())
+    // Successful gene names
+    successful_genes = gene_outputs.map { it[0] }
+
+    // Collect lists
+    all_genes_list = genes.collect()
+    successful_list = successful_genes.collect()
+
+    // Compute failures
+    failed_genes = all_genes_list
+        .combine(successful_list)
+        .map { all, success -> all - success }
+
+    COMBINE_GENES(gene_outputs.map{ it[1] }.collect())
+    LOG_FAILURES(failed_genes)
 }

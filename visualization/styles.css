@@ -1,0 +1,24 @@
+@import url('https://unpkg.com/bootstrap@5.3.3/dist/css/bootstrap.min.css');
+/* from https://vizhub.com/curran/multiple-menus-with-d3 */
+
+.ui-elements-container {
+  display: flex;
+  flex-direction: column;
+  font-family: sans-serif;
+}
+
+.ui-elements-container .menus-container {
+  display: flex;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.ui-elements-container .view-container {
+  display: flex;
+  font-size: 32px;
+  color: #333333;
+}
+
+.info-container {
+  overflow: auto;
+}
