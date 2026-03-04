@@ -24,7 +24,7 @@ export const main = (container, { state, setState }) => {
   const width = container.clientWidth;
   const height = container.clientHeight;
 
-  console.log("Start of main")
+  console.log(height)
 
   const {
     transform,
@@ -52,7 +52,6 @@ export const main = (container, { state, setState }) => {
     }));
     return;
   }
-  console.log("First stop in main")
 
   const nodeLegendWidth = 100;
   const nodeLegendHeight = 500;
@@ -522,7 +521,6 @@ export const main = (container, { state, setState }) => {
       tissue,
     });
   }
-  console.log("End of main")
 };
 
 const container = document.getElementById("viz");

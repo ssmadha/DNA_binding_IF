@@ -80,7 +80,7 @@ export const graph = (
     .attr('transform', transform);
 
   // if we don't have any nodes
-  if (!nodes) {
+  if (!nodes || nodes.length < 1) {
     networkGroup.selectAll('circle.nodes').remove();
 
     networkGroup.selectAll('path.links').remove();
