@@ -6,7 +6,7 @@ process DOWNLOAD_GENE {
 
     time '15m'
     errorStrategy 'ignore'
-    maxRetries 2
+//     maxRetries 2
 
     publishDir "results/individual", mode: 'copy'
 

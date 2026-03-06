@@ -21,10 +21,23 @@ import { infoView } from './infoView.js';
 
 
 export const main = (container, { state, setState }) => {
-  const width = container.clientWidth;
-  const height = container.clientHeight;
+  // compute width/height only once and store in state to avoid the growth
+  // feedback loop described above. if the container does not have a fixed
+  // height, `container.clientHeight` will grow whenever we draw an svg with
+  // that same height, so subsequent renders keep inflating the page.
+  let width = state.dimensions?.width;
+  let height = state.dimensions?.height;
 
-  console.log(height)
+  if (width === undefined || height === undefined) {
+    width = container.clientWidth;
+    // fall back to viewport size if the container is still empty
+    height = container.clientHeight || window.innerHeight * 0.8;
+
+    setState((s) => ({
+      ...s,
+      dimensions: { width, height },
+    }));
+  }
 
   const {
     transform,
@@ -62,9 +75,8 @@ export const main = (container, { state, setState }) => {
   const netGraphX = bodyWidth;
   const netGraphY = 0;
   const netGraphWidth = width - netGraphX - nodeLegendWidth;
-  const netGraphHeight = bodyHeight;
+  const netGraphHeight = height;
 
-  const infoHeight = 400;
   const simMinX = 10;
   const simMaxX = netGraphWidth - 10;
   const simMinY = 10;
