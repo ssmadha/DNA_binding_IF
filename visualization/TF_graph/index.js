@@ -17,6 +17,7 @@ import {
 import { simulate } from './simulate.js';
 import { clusterLegend } from './clusterLegend.js';
 import { nodeLegend } from './nodeLegend.js';
+import { targetGraph } from './targetGraph.js';
 import { infoView } from './infoView.js';
 
 
@@ -53,7 +54,7 @@ export const main = (container, { state, setState }) => {
     hoveredCluster,
     clickedOrgan,
     hoveredOrgan,
-    clickedNodes,
+    clickedNodes: clickedNode,
     filterLimit,
     geneSearch,
   } = state;
@@ -75,7 +76,7 @@ export const main = (container, { state, setState }) => {
   const netGraphX = bodyWidth;
   const netGraphY = 0;
   const netGraphWidth = width - netGraphX - nodeLegendWidth;
-  const netGraphHeight = height;
+  const netGraphHeight = bodyHeight;
 
   const simMinX = 10;
   const simMaxX = netGraphWidth - 10;
@@ -404,7 +405,7 @@ export const main = (container, { state, setState }) => {
       velocityDecay: 0.8,
     });
   }
-
+  console.log(links);
   //graphSvg.attr('transform', transform);
 
   //zoom code from https://vizhub.com/curran/d6f1170765c84a498caa6ea11403e3be
@@ -427,7 +428,7 @@ export const main = (container, { state, setState }) => {
       freezeSim: true,
     }));
     return;
-    if (!clickedNodes || clickedNodes.length == 0) {
+    if (!clickedNode || clickedNode.length == 0) {
       // console.log(clickedNodes);
       // console.log('empty clicked nodes');
       setState((state) => ({
@@ -436,11 +437,11 @@ export const main = (container, { state, setState }) => {
         keepData: true,
         freezeSim: true,
       }));
-    } else if (clickedNodes.includes(clickedNode)) {
+    } else if (clickedNode.includes(clickedNode)) {
       // console.log('removing');
       setState((state) => ({
         ...state,
-        clickedNodes: clickedNodes.filter(
+        clickedNodes: clickedNode.filter(
           (d) => d.id !== clickedNode.id,
         ),
         keepData: true,
@@ -448,7 +449,7 @@ export const main = (container, { state, setState }) => {
       }));
     } else {
       // console.log('pushing');
-      clickedNodes.push(clickedNode);
+      clickedNode.push(clickedNode);
       setState((state) => ({
         ...state,
         clickedNodes: [clickedNode],
@@ -519,15 +520,37 @@ export const main = (container, { state, setState }) => {
     });
   }
 
-  const infoDiv = containerSelection
+
+  const clickedInfoDiv = containerSelection
+    .selectAll('div.clicked-info-container')
+    .data([null])
+    .join('div')
+    .attr('class', 'flex-row clicked-info-container');
+
+  const targetDiv = clickedInfoDiv
+    .selectAll('div.targetGraph')
+    .data([null])
+    .join('div')
+    .attr('class', 'targetGraph');
+
+  const infoDiv = clickedInfoDiv
     .selectAll('div.info-container')
     .data([null])
     .join('div')
     .attr('class', 'info-container');
 
-  if (clickedNodes) {
+  if (clickedNode) {
+    targetGraph(targetDiv, {
+      nodes,
+      clickedNode,
+      links,
+      data: asif_melted,
+      subData: transcript_data,
+      tissue,
+    });
+
     infoView(infoDiv, {
-      nodes: clickedNodes,
+      nodes: clickedNode,
       data: asif_melted,
       subData: transcript_data,
       tissue,

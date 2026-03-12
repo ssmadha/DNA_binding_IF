@@ -10,7 +10,7 @@
    overflow) fixes the feedback loop. */
 #viz {
   width: 100%;
-  height: 80vh;            /* choose a sensible viewport fraction or use px */
+  height: 100%;            /* choose a sensible viewport fraction or use px */
   overflow: hidden;
 }
 
