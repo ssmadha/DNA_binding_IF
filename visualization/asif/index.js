@@ -5,7 +5,8 @@ const [
     tissue_cluster,
     ppi_edges_byGene,
     ppi_edges_string_byGene,
-    hi_union
+    hi_union,
+    TFLink_Ensembl_ID,
 ] = await Promise.all([
     d3.csv("./asif/ASIF.csv"),
     d3.csv("./asif/ASIF_melted.csv"),
@@ -13,7 +14,8 @@ const [
     d3.csv("./asif/tissue_clusters.csv"),
     d3.csv("./asif/ppi_edges_byGene.csv"),
     d3.csv("./asif/ppi_edges_string_byGene.csv"),
-    d3.csv("./asif/HI-union_TFonly.csv")
+    d3.csv("./asif/HI-union_TFonly.csv"),
+    d3.csv("./asif/TFLink_Ensembl_ID.csv"),
 ]);
 
 //import * as d3 from 'd3';
@@ -93,31 +95,18 @@ for (const d of hi_union) {
 const url =
   'https://raw.githubusercontent.com/ssmadha/DNA_binding_IF/main/ASIF_transcript_melted_no0.csv';
 
-let transcript_data;
-async function fetchData() {
-  try {
-    // Use await to wait for the promise to resolve
-    const data = await d3.csv(url);
-    // Process the data or perform any other actions
-    for (const d of data) {
-      d.ASIF = +d.ASIF;
-      d.Expression = +d.Expression;
-      d['Percent Expression'] = +d['Percent Expression'];
-    }
-    return data; // Return the parsed CSV data
-  } catch (error) {
-    // Handle any errors that occur during fetching or parsing
-    console.error('Error loading the CSV file:', error);
+export async function loadTranscriptData() {
+  const data = await d3.csv(url);
+
+  for (const d of data) {
+    d.ASIF = +d.ASIF;
+    d.Expression = +d.Expression;
+    d['Percent Expression'] = +d['Percent Expression'];
   }
+
+  return data;
 }
 
-// Call the fetchData function to fetch and parse CSV data
-fetchData().then((data) => {
-  // Store the data in a variable or perform further actions
-  //console.log(data); // Output the parsed CSV data to the console
-  transcript_data = data;
-  // You can assign the data to a variable here if needed
-});
 export const main = (container) => {
   const fontSize = 20;
 
@@ -136,5 +125,5 @@ export {
   ppi_edges_byGene,
   ppi_edges_string_byGene,
   hi_union,
-  transcript_data,
+  TFLink_Ensembl_ID,
 };

@@ -2,7 +2,7 @@
 
 export const targetGraph = (
   selection,
-  { nodes, clickedNode, links, data, subData, tissue },
+  { nodes, clickedNode, links },
 ) => {
   if (!nodes || nodes.length === 0 || !links) {
     return;
@@ -16,15 +16,16 @@ export const targetGraph = (
   const clickedNodeId = clickedNode.map((d) => d.id);
   const miniGraphLinks = links.filter(
     (link) =>
-      clickedNodeId.includes(link.source.id || link.source) ||
-      clickedNodeId.includes(link.target.id || link.target),
+      clickedNodeId.includes(link.source.id || link.source),
   );
 
   // Get all nodes involved in the mini graph (clicked nodes + connected nodes)
-  const connectedNodeIds = new Set(clickedNodeId);
+  const connectedNodeIds = new Set(clickedNode);
   miniGraphLinks.forEach((link) => {
-    connectedNodeIds.add(link.source.id || link.source);
-    connectedNodeIds.add(link.target.id || link.target);
+    connectedNodeIds.add({
+      id: link.target,
+      text: link.text,
+    });
   });
 
   // Find the actual node objects for all involved nodes
@@ -33,8 +34,8 @@ export const targetGraph = (
   const clickedNodesMap = {};
   const connectedNodes = [];
 
-  Array.from(connectedNodeIds).forEach((id) => {
-    const existingNode = nodes.find((n) => n.id === id);
+  Array.from(connectedNodeIds).forEach((d) => {
+    const existingNode = nodes.find((n) => n.id === d.id);
     const node = existingNode
       ? {
           ...existingNode,
@@ -42,8 +43,8 @@ export const targetGraph = (
           y: 0,
         }
       : {
-          id,
-          text: id,
+          id: d.id,
+          text: d.text,
           x: 0,
           y: 0,
           r: 5,
@@ -51,8 +52,8 @@ export const targetGraph = (
           stroke: '#333333',
         };
 
-    if (clickedNodeId.includes(id)) {
-      clickedNodesMap[id] = node;
+    if (clickedNodeId.includes(d.id)) {
+      clickedNodesMap[d.id] = node;
     } else {
       connectedNodes.push(node);
     }
@@ -60,8 +61,8 @@ export const targetGraph = (
 
   const allNodes = [...Object.values(clickedNodesMap), ...connectedNodes];
 
-  console.log('Mini graph nodes:', allNodes);
-  console.log('Mini graph links:', miniGraphLinks);
+  // console.log('Mini graph nodes:', allNodes);
+  // console.log('Mini graph links:', miniGraphLinks);
 
   // Normalize link objects to have source/target as objects with id property
   const normalizedLinks = miniGraphLinks.map((link) => ({

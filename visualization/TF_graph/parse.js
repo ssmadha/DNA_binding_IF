@@ -25,8 +25,8 @@ export const parseData = ({
 
   const colorStrokeScale = d3.scaleOrdinal(
     Object.values(nodeStrokeValue),
-    d3.schemePaired,
-  );
+    ["red", "orange", "pink", "green", "blue", "indigo", "violet", "grey", "black", "cyan", "magenta", "forestgreen"],
+  )
 
   const xRanks = d3.rank(
     data,
@@ -39,7 +39,7 @@ export const parseData = ({
       d3.ascending(radiusValue(a), radiusValue(b)) || 1,
   );
 
-  console.log(xRanks);
+  // console.log(xRanks);
   return {
     nodes: data.map((d, i) => {
       return {

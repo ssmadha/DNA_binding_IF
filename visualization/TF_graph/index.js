@@ -1,37 +1,25 @@
 //import * as d3 from '../d3';
 
-import { graph } from './graph.js';
-import { body } from './body.js';
- import { bodyData, organDict } from '../body/index.js';
-import {
-  asif_melted,
-  gene_cluster,
-  hi_union,
-  transcript_data,
-} from '../asif/index.js';
-import {
-  parseData,
-  parsePackData,
-  parseEdges,
-} from './parse.js';
-import { simulate } from './simulate.js';
-import { clusterLegend } from './clusterLegend.js';
-import { nodeLegend } from './nodeLegend.js';
-import { targetGraph } from './targetGraph.js';
-import { infoView } from './infoView.js';
+import {graph} from './graph.js';
+import {body} from './body.js';
+import {bodyData, organDict} from '../body/index.js';
+import {asif_melted, gene_cluster, hi_union, TFLink_Ensembl_ID, loadTranscriptData,} from '../asif/index.js';
+import {parseData, parseEdges, parsePackData,} from './parse.js';
+import {simulate} from './simulate.js';
+import {clusterLegend} from './clusterLegend.js';
+import {nodeLegend} from './nodeLegend.js';
+import {targetGraph} from './targetGraph.js';
+import {infoView} from './infoView.js';
 
+const transcript_data = await loadTranscriptData()
 
 export const main = (container, { state, setState }) => {
-  // compute width/height only once and store in state to avoid the growth
-  // feedback loop described above. if the container does not have a fixed
-  // height, `container.clientHeight` will grow whenever we draw an svg with
-  // that same height, so subsequent renders keep inflating the page.
+
   let width = state.dimensions?.width;
   let height = state.dimensions?.height;
 
   if (width === undefined || height === undefined) {
     width = container.clientWidth;
-    // fall back to viewport size if the container is still empty
     height = container.clientHeight || window.innerHeight * 0.8;
 
     setState((s) => ({
@@ -62,7 +50,7 @@ export const main = (container, { state, setState }) => {
   if (filterLimit === undefined) {
     setState((state) => ({
       ...state,
-      filterLimit: 20,
+      filterLimit: 10,
     }));
     return;
   }
@@ -165,8 +153,7 @@ export const main = (container, { state, setState }) => {
     .attr('id', 'geneSearch')
     .on('input', (event) => {
       const searchText = event.target.value;
-      console.log(searchText);
-      if (searchText || searchText != '') {
+      if (searchText || searchText !== '') {
         setState((state) => ({
           ...state,
           geneSearch: searchText,
@@ -285,13 +272,11 @@ export const main = (container, { state, setState }) => {
     setHoveredOrgan,
   });
 
-  const tissue = clickedOrgan;
-
   if (!keepData) {
     if (clickedOrgan) {
       const filteredData = asif_melted.filter(
         (d) =>
-          d.Tissue === tissue &&
+          d.Tissue === clickedOrgan &&
           d.Expression >= filterLimit,
       );
       const {
@@ -330,7 +315,7 @@ export const main = (container, { state, setState }) => {
           data: filteredData,
           dataID: (d) => d['Gene ID'],
           subData: transcript_data.filter(
-            (d) => d.Tissue == tissue,
+            (d) => d.Tissue === clickedOrgan,
           ),
           parentID: (d) => d.Gene,
           childID: (d) => d.Transcript,
@@ -379,12 +364,10 @@ export const main = (container, { state, setState }) => {
       )
     : [];
 
-  const filteredLinks = true ? links : [];
-
   if (!freezeSim && clickedOrgan) {
     simulate({
       nodes: filteredNodes,
-      links: filteredLinks,
+      links,
       netGraphWidth,
       netGraphHeight,
       simMinX,
@@ -405,7 +388,6 @@ export const main = (container, { state, setState }) => {
       velocityDecay: 0.8,
     });
   }
-  console.log(links);
   //graphSvg.attr('transform', transform);
 
   //zoom code from https://vizhub.com/curran/d6f1170765c84a498caa6ea11403e3be
@@ -428,7 +410,7 @@ export const main = (container, { state, setState }) => {
       freezeSim: true,
     }));
     return;
-    if (!clickedNode || clickedNode.length == 0) {
+    if (!clickedNode || clickedNode.length === 0) {
       // console.log(clickedNodes);
       // console.log('empty clicked nodes');
       setState((state) => ({
@@ -470,7 +452,7 @@ export const main = (container, { state, setState }) => {
             .includes(geneSearch.toLowerCase()),
         )
       : filteredNodes,
-    links: filteredLinks,
+    links,
     packData,
     nodeStrokeWidth: 3,
     linkStrokeWidth: 1,
@@ -539,21 +521,30 @@ export const main = (container, { state, setState }) => {
     .join('div')
     .attr('class', 'info-container');
 
+  const heatmapDiv = clickedInfoDiv
+    .selectAll('div.heatmap-container')
+    .data([null])
+    .join('div')
+    .attr('class', 'heatmap -container');
+
   if (clickedNode) {
     targetGraph(targetDiv, {
       nodes,
       clickedNode,
-      links,
-      data: asif_melted,
-      subData: transcript_data,
-      tissue,
+      links: TFLink_Ensembl_ID.map((d)  => {
+        return {
+          source: d.TF,
+          target: d.target,
+          text: d.target_symbol,
+        }
+      }),
     });
 
     infoView(infoDiv, {
       nodes: clickedNode,
       data: asif_melted,
       subData: transcript_data,
-      tissue,
+      tissue: clickedOrgan,
     });
   }
 };
