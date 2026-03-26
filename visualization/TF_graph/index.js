@@ -3,7 +3,7 @@
 import {graph} from './graph.js';
 import {body} from './body.js';
 import {bodyData, organDict} from '../body/index.js';
-import {asif_melted, gene_cluster, hi_union, TFLink_Ensembl_ID, loadTranscriptData,} from '../asif/index.js';
+import {asif_melted, gene_cluster, hi_union, TFLink_Ensembl_ID, gene_level_expression, loadTranscriptData,} from '../asif/index.js';
 import {parseData, parseEdges, parsePackData,} from './parse.js';
 import {simulate} from './simulate.js';
 import {clusterLegend} from './clusterLegend.js';
@@ -293,7 +293,7 @@ export const main = (container, { state, setState }) => {
         simMinY,
         simMaxY,
         radiusValue: (d) => d.Expression,
-        radiusExtent: [5, 15],
+        radiusExtent: [3, 20],
         nodeFillValue: (d) => d.ASIF,
         nodeStrokeValue: gene_cluster[0],
       });
@@ -525,19 +525,26 @@ export const main = (container, { state, setState }) => {
     .selectAll('div.heatmap-container')
     .data([null])
     .join('div')
-    .attr('class', 'heatmap -container');
+    .attr('class', 'heatmap-container');
 
   if (clickedNode) {
     targetGraph(targetDiv, {
       nodes,
       clickedNode,
-      links: TFLink_Ensembl_ID.map((d)  => {
+      links: TFLink_Ensembl_ID.map((d) => {
         return {
           source: d.TF,
           target: d.target,
           text: d.target_symbol,
         }
       }),
+      tissue: clickedOrgan,
+      geneLevelExpression: gene_level_expression,
+      idValue: (d) => d.Gene,
+      textValue: (d) => d["Gene name"],
+      tissueValue: (d) => d.Tissue,
+      radiusValue: (d) => d.nTPM,
+      radiusScale,
     });
 
     infoView(infoDiv, {

@@ -2,7 +2,7 @@
 
 export const targetGraph = (
   selection,
-  { nodes, clickedNode, links },
+  { nodes, clickedNode, links, tissue, geneLevelExpression, idValue, textValue, tissueValue, radiusValue, radiusScale },
 ) => {
   if (!nodes || nodes.length === 0 || !links) {
     return;
@@ -36,21 +36,33 @@ export const targetGraph = (
 
   Array.from(connectedNodeIds).forEach((d) => {
     const existingNode = nodes.find((n) => n.id === d.id);
+    const unfoundInfo = geneLevelExpression.find((n) => d.id === idValue(n) & tissue === tissueValue(n))
+    console.log(d.id)
+    console.log(unfoundInfo)
     const node = existingNode
       ? {
           ...existingNode,
           x: 0,
           y: 0,
         }
+      : unfoundInfo ? {
+              id: d.id,
+              text: textValue(unfoundInfo),
+              x: 0,
+              y: 0,
+              r: radiusScale(radiusValue(unfoundInfo)),
+              fill: '#999999',
+              stroke: '#333333',
+      }
       : {
-          id: d.id,
-          text: d.text,
-          x: 0,
-          y: 0,
-          r: 5,
-          fill: '#999999',
-          stroke: '#333333',
-        };
+              id: d.id,
+              text: d.text,
+              x: 0,
+              y: 0,
+              r: 5,
+              fill: '#999999',
+              stroke: '#333333',
+      };
 
     if (clickedNodeId.includes(d.id)) {
       clickedNodesMap[d.id] = node;
