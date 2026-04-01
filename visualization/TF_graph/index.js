@@ -544,7 +544,7 @@ export const main = (container, { state, setState }) => {
       textValue: (d) => d["Gene name"],
       tissueValue: (d) => d.Tissue,
       radiusValue: (d) => d.nTPM,
-      radiusScale,
+      radiusScale: d3.scaleLinear([0,500], [3,20]),
     });
 
     infoView(infoDiv, {
