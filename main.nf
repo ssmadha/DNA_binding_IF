@@ -4,13 +4,13 @@ nextflow.enable.dsl=2
 
 process DOWNLOAD_GENE {
 
-    time '15m'
-    errorStrategy 'ignore'
-//     maxRetries 2
+    time { 15.m * task.attempt }
+    errorStrategy 'retry'
+    maxRetries 2
 
     publishDir "results/individual", mode: 'copy'
 
-    conda "/home/shariq/anaconda3/envs/DNA_Binding_IF"
+    conda "environment.yaml"
 
     input:
     val gene_name

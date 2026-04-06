@@ -1,5 +1,4 @@
 import random
-from io import StringIO
 
 import Bio.SeqFeature
 import biomart
@@ -9,14 +8,15 @@ import mygene
 import pandas as pd
 from Bio import Entrez, SeqIO, SeqFeature, Align
 from Bio.SeqFeature import SimpleLocation
-from numpy.ma.core import mean
+
+import os
 
 Entrez.email = "smadha@wpi.edu"
 
 server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
 mart = server.datasets['hsapiens_gene_ensembl']
 
-yue_ppi_df = pd.read_csv("/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/result_df.tsv", sep='\t', header=0)
+yue_ppi_df = pd.read_csv("../../../result_df.tsv", sep='\t', header=0)
 
 class Domain:
     """
@@ -43,7 +43,7 @@ class Domain:
         return types
 
     def determine_dna_binding(self, dna_binding_file="interpro_superfamily_domains_DBD.tsv"):
-        interpro_superfamily_domains_DBD = pd.read_csv("/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/interpro_superfamily_domains_DBD.tsv", sep='\t', index_col=0)
+        interpro_superfamily_domains_DBD = pd.read_csv("../../../interpro_superfamily_domains_DBD.tsv", sep='\t', index_col=0)
         if self.interpro_id is None or self.source!="SuperFamily":
             return False
         return interpro_superfamily_domains_DBD.loc[self.interpro_id,"DNA-binding"]
@@ -90,7 +90,6 @@ class Transcript:
             ensp_id = self.ensp_id
         results = ensembl_rest.overlap_translation(ensp_id,
                                                    type="domain")
-        #print(results)
         return [Domain(interpro_id=res["interpro"], source = res["type"], **res) for res in results]
 
     def get_refseq_id(self):
@@ -100,7 +99,6 @@ class Transcript:
                                     'filters': {'ensembl_peptide_id': self.ensp_id}
                                     })
             data = response.raw.data.decode('ascii')
-            # print(data.strip())
             if data.strip()=="":
                 return None
             return data.strip()
@@ -114,7 +112,6 @@ class Transcript:
                                     'filters': {'ensembl_peptide_id': self.ensp_id}
                                     })
             data = response.raw.data.decode('ascii')
-            # print(data.strip())
             if data.strip()=="":
                 return None
             return data.strip()
@@ -233,42 +230,6 @@ class Gene:
         get_gene_result = mg.getgene(ensg_id)
         return get_gene_result
 
-    def download_transcripts(self, ensg_id=None, biotype_filter=None):
-        if biotype_filter is None:
-            biotype_filter = ['protein_coding']
-        if ensg_id is None:
-            ensg_id = self.ensg_id
-        try:
-            isoforms = ensembl_rest.lookup(ensg_id,
-                                           params={'multiple_sequences': True,
-                                                   'type': 'protein',
-                                                   'expand': True
-                                                   }
-                                           )
-        except ensembl_rest.HTTPError as err:
-            error_code = err.response.status_code
-            error_message= err.response.json()['error']
-            if(error_code==400) and ("not found" in error_message):
-                print(ensg_id + " not found")
-            elif(error_code==400) and ("No sequences returned" in error_message):
-                print(ensg_id + " no protein sequences found")
-            else:
-                raise
-            return None
-        transcripts = []
-        for isoform in isoforms["Transcript"]:
-            if isoform['biotype'] not in biotype_filter:
-                continue
-            try:
-                transcript = Transcript(self, isoform['id'], isoform['Translation']['id'])
-                if transcript.refseq_id is not None and transcript.uniprot_id is not None:
-                    transcript.seq = transcript.download_sequence()
-                    transcript.yue_ppi_locations()
-                    transcripts.append(transcript)
-            except:
-                print("Error getting transcript: " + isoform['id'])
-        return transcripts
-
     def check_alternate_id(self, ensg_id = None):
         if ensg_id is None:
             ensg_id = self.ensg_id
@@ -310,6 +271,42 @@ class Gene:
             strand = gene_info['genomic_pos']['strand']
         return start_pos, end_pos, strand
 
+    def download_transcripts(self, ensg_id=None, biotype_filter=None):
+        if biotype_filter is None:
+            biotype_filter = ['protein_coding']
+        if ensg_id is None:
+            ensg_id = self.ensg_id
+        try:
+            isoforms = ensembl_rest.lookup(ensg_id,
+                                           params={'multiple_sequences': True,
+                                                   'type': 'protein',
+                                                   'expand': True
+                                                   }
+                                           )
+        except ensembl_rest.HTTPError as err:
+            error_code = err.response.status_code
+            error_message= err.response.json()['error']
+            if(error_code==400) and ("not found" in error_message):
+                print(ensg_id + " not found")
+            elif(error_code==400) and ("No sequences returned" in error_message):
+                print(ensg_id + " no protein sequences found")
+            else:
+                raise
+            return None
+        transcripts = []
+        for isoform in isoforms["Transcript"]:
+            if isoform['biotype'] not in biotype_filter:
+                continue
+            try:
+                transcript = Transcript(self, isoform['id'], isoform['Translation']['id'])
+                if transcript.refseq_id is not None and transcript.uniprot_id is not None:
+                    transcript.seq = transcript.download_sequence()
+                    transcript.yue_ppi_locations()
+                    transcripts.append(transcript)
+            except:
+                print("Error getting transcript: " + isoform['id'])
+        return transcripts
+
     def check_domain_redundancy(self, transcripts=None):
         if transcripts is None:
             transcripts = self.transcripts
@@ -339,8 +336,8 @@ class Gene:
                     del domain_queue[i]
                 currDomain.prot_id = transcript.refseq_id
                 keeping_domains.append(currDomain)
-        print("keeping_domains:")
-        print(keeping_domains)
+        # print("keeping_domains:")
+        # print(keeping_domains)
         for transcript in self.transcripts:
             transcript.filtered_domains = \
                 [domain for domain in keeping_domains if domain.prot_id == transcript.refseq_id]
@@ -362,14 +359,11 @@ class Gene:
 
         for feature in record.features:
             if feature.type == "CDS" and symbol in feature.qualifiers['gene']:
-                # print(feature)
                 refseq_id = feature.qualifiers['protein_id'][0]
-                # print(self.transcripts)
                 for transcript in self.transcripts:
                     # if transcript.refseq_id is None:
                     #     break
                     these_domains = []
-                    # print(transcript.refseq_id, refseq_id)
                     if transcript.refseq_id in refseq_id:
                         these_domains = transcript.filtered_domains
 
@@ -377,8 +371,6 @@ class Gene:
                     prepend_seq = ""
                     exon_start = 0
                     exon_end = 0
-                    # print(prot_id)
-                    # print(these_domains)
                     for i, location in parts:
                         exon_domains = {}
                         tail_len = (len(prepend_seq) + len(location)) % 3
@@ -417,9 +409,6 @@ class Gene:
                                         domain_start = exon_start
                                         domain_end = exon_end
                                     if domain_start is not None:
-                                        # print(domain)
-                                        # print(domain.start, exon_start, domain_start, domain.start - exon_start)
-                                        # print(domain.end, exon_end, domain_end, exon_end - domain.end)
                                         exon_domains[".".join([str(domain_start),
                                                                str(domain_end),
                                                                str(max(domain.start - exon_start, 0)),
@@ -446,9 +435,6 @@ class Gene:
                                         domain_start = exon_start
                                         domain_end = exon_end
                                     if domain_start is not None:
-                                        # print(domain)
-                                        # print(domain.start, exon_start, domain_start, domain.start - exon_start)
-                                        # print(domain.end, exon_end, domain_end, exon_end - domain.end)
                                         exon_domains[".".join([str(domain_start),
                                                                str(domain_end),
                                                                str(max(domain.start - exon_start, 0)),
@@ -488,9 +474,6 @@ class Gene:
                                         domain_start = exon_start
                                         domain_end = exon_end
                                     if domain_start is not None:
-                                        # print(domain)
-                                        # print(domain.start, exon_start, domain_start, domain.start - exon_start)
-                                        # print(domain.end, exon_end, domain_end, exon_end - domain.end)
                                         exon_domains[".".join([str(domain_start).strip("<>"),
                                                                str(domain_end).strip("<>"),
                                                                str(max(domain.start - exon_start, 0)).strip("<>"),
@@ -517,9 +500,6 @@ class Gene:
                                         domain_start = exon_start
                                         domain_end = exon_end
                                     if domain_start is not None:
-                                        # print(domain)
-                                        # print(domain.start, exon_start, domain_start, domain.start - exon_start)
-                                        # print(domain.end, exon_end, domain_end, exon_end - domain.end)
                                         exon_domains[".".join([str(domain_start).strip("<>"),
                                                                str(domain_end).strip("<>"),
                                                                str(max(domain.start - exon_start, 0)).strip("<>"),
@@ -534,9 +514,7 @@ class Gene:
                         else:
                             reformed_exons[exon_key]['domains'].update(exon_domains)
                         prepend_seq = str(next_location.extract(record).seq)
-                        # if isinstance(location.start, SeqFeature.BeforePosition):
-                        # print(location.start)
-        # print(reformed_exons)
+
         tmp = [el.split(".") for el in list(reformed_exons.keys())]
         for el in tmp:
             el[0] = int(el[0])
@@ -549,20 +527,16 @@ class Gene:
             el[3] = str(el[3])
         tmp = [".".join(el) for el in tmp]
         superisoform = ""
-        # print(tmp)
+
         if strand == -1:
             tmp = tmp[::-1]
         superdomains = []
         for exon in tmp:
             if len(reformed_exons[exon]['domains']) > 0:
-                # print(reformed_exons[exon]['domains'])
                 for domain in reformed_exons[exon]['domains']:
                     domain_start = int(domain.split(".")[2]) + len(superisoform)
                     domain_end = int(domain.split(".")[1]) - int(domain.split(".")[0]) + domain_start
-                    # print(reformed_exons[exon]['domains'][domain]['seq_region_name'], domain_start, domain_end)
                     superdomains.append(Domain(interpro_id="SD" + str(random.randint(0, 9999)), source="Yue", start=domain_start,
                            end=domain_end, pos=SeqFeature.FeatureLocation(domain_start, domain_end+1)))
             superisoform += reformed_exons[exon]['seq']
-            # print(exon)
-            # print(reformed_exons[exon]['seq'])
         return superisoform, superdomains
