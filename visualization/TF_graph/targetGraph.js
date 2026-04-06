@@ -131,8 +131,14 @@ export const targetGraph = (
     node.y = Math.max(nodeRadius, Math.min(graphHeight - nodeRadius, node.y));
   });
 
+  const miniLinkGroup = graphGroup
+    .selectAll('g.miniLinkGroup')
+    .data([null])
+    .join('g')
+    .attr('class', 'miniLinkGroup');
+
   // Draw links
-  const linkSelection = graphGroup
+  const linkSelection = miniLinkGroup
     .selectAll('line.miniLink')
     .data(normalizedLinks, (d) => `${d.source.id}-${d.target.id}`)
     .join('line')
