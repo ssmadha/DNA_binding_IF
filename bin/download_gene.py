@@ -1,4 +1,4 @@
-#!/home/shariq/anaconda3/envs/DNA_Binding_IF/bin/python
+#!/usr/bin/env python
 
 import sys
 
