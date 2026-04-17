@@ -20,7 +20,7 @@ process DOWNLOAD_GENE {
 
     script:
     """
-    download_gene.py ${gene_name} > ${gene_name}.txt
+    download_gene.py -e ${gene_name} > ${gene_name}.txt
     """
 }
 
@@ -59,7 +59,7 @@ process LOG_FAILURES {
 workflow {
 
     genes = Channel
-        .fromPath("expressed_coding_isoforms_with_relative_tpm_threshold_1_geneIDs.txt")
+        .fromPath(params.genes_file)
         .splitText()
         .map { it.trim() }
         .filter { it }

@@ -4,19 +4,16 @@ import Bio.SeqFeature
 import biomart
 import ensembl_rest
 import mygene
-
 import pandas as pd
 from Bio import Entrez, SeqIO, SeqFeature, Align
 from Bio.SeqFeature import SimpleLocation
-
-import os
 
 Entrez.email = "smadha@wpi.edu"
 
 server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
 mart = server.datasets['hsapiens_gene_ensembl']
 
-yue_ppi_df = pd.read_csv("../../../result_df.tsv", sep='\t', header=0)
+yue_ppi_df = pd.read_csv("../result_df.tsv", sep='\t', header=0)
 
 class Domain:
     """
@@ -63,7 +60,7 @@ class Transcript:
     uniprot_id = None
     domains = []
 
-    def __init__(self, gene, enst_id: str, ensp_id: str):
+    def __init__(self, gene, enst_id: str, ensp_id: str, domain_types):
         self.gene = gene
         self.enst_id = enst_id
         self.ensp_id = ensp_id
@@ -76,7 +73,8 @@ class Transcript:
         #print("Sequence: " + self.seq)
         #self.domains = self.download_domains()
         #print("Domains: " + str(self.domains))
-        self.yue_ppi_locations()
+        if 'ppi' in domain_types:
+            self.domains = self.yue_ppi_locations()
         #print(len(self.domains))
 
     def download_sequence(self, ensp_id=None):
@@ -84,13 +82,6 @@ class Transcript:
             ensp_id = self.ensp_id
         seq = ensembl_rest.sequence_id(ensp_id)["seq"]
         return seq
-
-    def download_domains(self, ensp_id=None):
-        if ensp_id is None:
-            ensp_id = self.ensp_id
-        results = ensembl_rest.overlap_translation(ensp_id,
-                                                   type="domain")
-        return [Domain(interpro_id=res["interpro"], source = res["type"], **res) for res in results]
 
     def get_refseq_id(self):
         try:
@@ -118,6 +109,13 @@ class Transcript:
         except:
             return None
 
+    def download_domains(self, ensp_id=None):
+        if ensp_id is None:
+            ensp_id = self.ensp_id
+        results = ensembl_rest.overlap_translation(ensp_id,
+                                                   type="domain")
+        return [Domain(interpro_id=res["interpro"], source = res["type"], **res) for res in results]
+
     def yue_ppi_locations(self):
         if self.uniprot_id is None:
             return
@@ -137,9 +135,9 @@ class Transcript:
                                       pos=Bio.SeqFeature.CompoundLocation(locs)))
         for domain in domains:
             domain.types=["PPI"]
-        self.domains = domains
+        return domains
 
-    def align_superisoform(self):
+    def align_to_reference(self, refmode="superisoform"):
         aligner = Align.PairwiseAligner()
         aligner.match_score = 10
         aligner.mismatch_score = -15
@@ -148,11 +146,14 @@ class Transcript:
         aligner.query_open_gap_score = -25
         aligner.query_extend_gap_score = 0
         aligner.mode = "global"
-        superisoform_seq = self.gene.superisoform_seq
-        # print(superisoform_seq)
+        if refmode=="superisoform":
+            ref_seq = self.gene.superisoform_seq
+        else:
+            ref_seq = self.gene.transcripts[0].seq
+        # print(ref_seq)
         transcript_seq = self.seq
         #print(transcript_seq)
-        alignments = aligner.align(superisoform_seq, transcript_seq)
+        alignments = aligner.align(ref_seq, transcript_seq)
         superdomains = self.gene.superdomains
         #print([domain.pos for domain in superdomains])
 
@@ -183,7 +184,7 @@ class Gene:
     transcripts = None
     superisoform_seq = None
     
-    def __init__(self, ensg_id: str, biotype_filter=None):
+    def __init__(self, ensg_id: str, biotype_filter=None, refmode="superisoform", domain_filter=None):
         """
         Initialize a Gene object based on Ensembl ID
 
@@ -192,6 +193,8 @@ class Gene:
         """
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
+        if domain_filter is None:
+            domain_filter = ['ppi']
         self.ensg_id = ensg_id
         self.gene_info = self.download_gene_info()
         self.uniprot_id, self.refseq_id, self.symbol = self.check_alternate_id()
@@ -199,16 +202,18 @@ class Gene:
             return
         self.start_pos, self.end_pos, self.strand = self.check_positions()
         # print("downloading transcripts")
-        self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter)
+        self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter=biotype_filter,
+                                                     domain_filter =domain_filter)
         # print("checking redundancy")
         self.check_domain_redundancy()
         # print("generating superisoform")
-        self.superisoform_seq, self.superdomains = self.generate_superisoform()
+        if refmode == "superisoform":
+            self.superisoform_seq, self.superdomains = self.generate_superisoform()
         # print(self.superisoform_seq)
         # print(self.superdomains)
         # print("aligning to superisoform")
         for transcript in self.transcripts:
-            transcript.align_superisoform()
+            transcript.align_to_reference(refmode=refmode)
 
     def download_gene_info(self, ensg_id=None):
         if ensg_id is None:
@@ -271,9 +276,11 @@ class Gene:
             strand = gene_info['genomic_pos']['strand']
         return start_pos, end_pos, strand
 
-    def download_transcripts(self, ensg_id=None, biotype_filter=None):
+    def download_transcripts(self, ensg_id=None, biotype_filter=None, domain_types=None):
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
+        if domain_types is None:
+            domain_types = ['ppi']
         if ensg_id is None:
             ensg_id = self.ensg_id
         try:
@@ -298,7 +305,7 @@ class Gene:
             if isoform['biotype'] not in biotype_filter:
                 continue
             try:
-                transcript = Transcript(self, isoform['id'], isoform['Translation']['id'])
+                transcript = Transcript(self, isoform['id'], isoform['Translation']['id'], domain_types)
                 if transcript.refseq_id is not None and transcript.uniprot_id is not None:
                     transcript.seq = transcript.download_sequence()
                     transcript.yue_ppi_locations()
