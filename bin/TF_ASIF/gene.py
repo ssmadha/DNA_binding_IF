@@ -1,6 +1,5 @@
 import random
 
-import Bio.SeqFeature
 import biomart
 import ensembl_rest
 import mygene
@@ -10,10 +9,10 @@ from Bio.SeqFeature import SimpleLocation
 
 Entrez.email = "smadha@wpi.edu"
 
-server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
+server = biomart.BiomartServer('http://may2025.archive.ensembl.org/biomart')
 mart = server.datasets['hsapiens_gene_ensembl']
 
-yue_ppi_df = pd.read_csv("../result_df.tsv", sep='\t', header=0)
+#binding_site_df = pd.read_csv("../../../ppi_binding_sites.tsv", sep='\t', header=0)
 
 class Domain:
     """
@@ -25,9 +24,9 @@ class Domain:
         self.start = start
         self.end = end
         self.source = source
-        self.types = self.determine_types()
+        #self.types = self.determine_types()
         if pos is None:
-            self.pos = Bio.SeqFeature.SeqFeature(Bio.SeqFeature.FeatureLocation(start, end))
+            self.pos = SeqFeature.SeqFeature(SeqFeature.FeatureLocation(start, end))
         else:
             self.pos = pos
 
@@ -39,8 +38,8 @@ class Domain:
             types.append("PPI")
         return types
 
-    def determine_dna_binding(self, dna_binding_file="interpro_superfamily_domains_DBD.tsv"):
-        interpro_superfamily_domains_DBD = pd.read_csv("../../../interpro_superfamily_domains_DBD.tsv", sep='\t', index_col=0)
+    def determine_dna_binding(self, dna_binding_file="../../../interpro_superfamily_domains_DBD.tsv"):
+        interpro_superfamily_domains_DBD = pd.read_csv(dna_binding_file, sep='\t', index_col=0)
         if self.interpro_id is None or self.source!="SuperFamily":
             return False
         return interpro_superfamily_domains_DBD.loc[self.interpro_id,"DNA-binding"]
@@ -123,16 +122,18 @@ class Transcript:
             domains = []
         else:
             domains = self.domains
-        for contact in [loc[2:-2].split("), (")
-                        for loc in pd.concat([yue_ppi_df.loc[yue_ppi_df["protein_I_II"].str.startswith(self.uniprot_id),"contact_A"],
-                                              yue_ppi_df.loc[yue_ppi_df["protein_I_II"].str.endswith(self.uniprot_id), "contact_B"]])]:
-            locs = [Bio.SeqFeature.FeatureLocation(int(loc.split(", ")[0]), int(loc.split(", ")[1]))
-                    for loc in contact]
+        uniprot_id = self.uniprot_id
+        for index_number in binding_site_df.index[binding_site_df["UniProt"] == uniprot_id]:
+            binding_site_id = binding_site_df.loc[index_number, "ID"]
+            binding_site_source = binding_site_df.loc[index_number, "Source"]
+            binding_site = binding_site_df.loc[index_number, "Binding_Site"]
+            locs = [SeqFeature.FeatureLocation(int(loc.split(", ")[0]), int(loc.split(", ")[-1]))
+                    for loc in binding_site[1:-1].split(", ")]
             if len(locs) == 1:
-                domains.append(Domain(interpro_id="Yue" + str(random.randint(0, 9999)), source="Yue", start=locs[0].start, end=locs[0].end, pos=locs[0]))
+                domains.append(Domain(interpro_id=binding_site_id, source=binding_site_source, start=locs[0].start, end=locs[0].end, pos=locs[0]))
             else:
-                domains.append(Domain(interpro_id="Yue" + str(random.randint(0, 9999)), source="Yue", start=locs[0].start, end=locs[-1].end,
-                                      pos=Bio.SeqFeature.CompoundLocation(locs)))
+                domains.append(Domain(interpro_id=binding_site_id, source=binding_site_source, start=locs[0].start, end=locs[-1].end,
+                                      pos=SeqFeature.CompoundLocation(locs)))
         for domain in domains:
             domain.types=["PPI"]
         return domains
@@ -141,16 +142,16 @@ class Transcript:
         aligner = Align.PairwiseAligner()
         aligner.match_score = 10
         aligner.mismatch_score = -15
-        aligner.target_open_gap_score = -20
-        aligner.target_extend_gap_score = -20
-        aligner.query_open_gap_score = -25
-        aligner.query_extend_gap_score = 0
+        aligner.open_insertion_score = -20
+        aligner.extend_insertion_score = -20
+        aligner.open_deletion_score = -25
+        aligner.extend_deletion_score = 0
         aligner.mode = "global"
         if refmode=="superisoform":
             ref_seq = self.gene.superisoform_seq
         else:
             ref_seq = self.gene.transcripts[0].seq
-        # print(ref_seq)
+        #print(ref_seq)
         transcript_seq = self.seq
         #print(transcript_seq)
         alignments = aligner.align(ref_seq, transcript_seq)
@@ -184,13 +185,16 @@ class Gene:
     transcripts = None
     superisoform_seq = None
     
-    def __init__(self, ensg_id: str, biotype_filter=None, refmode="superisoform", domain_filter=None):
+    def __init__(self, ensg_id: str, binding_site_file, biotype_filter=None, refmode="superisoform",
+                 domain_filter=None):
         """
         Initialize a Gene object based on Ensembl ID
 
         params:
 
         """
+        global binding_site_df
+        binding_site_df = pd.read_csv(binding_site_file, sep='\t', header=0)
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
         if domain_filter is None:
@@ -203,7 +207,7 @@ class Gene:
         self.start_pos, self.end_pos, self.strand = self.check_positions()
         # print("downloading transcripts")
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter=biotype_filter,
-                                                     domain_filter =domain_filter)
+                                                     domain_types =domain_filter)
         # print("checking redundancy")
         self.check_domain_redundancy()
         # print("generating superisoform")
@@ -304,14 +308,14 @@ class Gene:
         for isoform in isoforms["Transcript"]:
             if isoform['biotype'] not in biotype_filter:
                 continue
-            try:
-                transcript = Transcript(self, isoform['id'], isoform['Translation']['id'], domain_types)
-                if transcript.refseq_id is not None and transcript.uniprot_id is not None:
-                    transcript.seq = transcript.download_sequence()
-                    transcript.yue_ppi_locations()
-                    transcripts.append(transcript)
-            except:
-                print("Error getting transcript: " + isoform['id'])
+            # try:
+            transcript = Transcript(self, isoform['id'], isoform['Translation']['id'], domain_types)
+            if transcript.refseq_id is not None and transcript.uniprot_id is not None:
+                transcript.seq = transcript.download_sequence()
+                #transcript.yue_ppi_locations()
+                transcripts.append(transcript)
+            # except:
+            #     print("Error getting transcript: " + isoform['id'])
         return transcripts
 
     def check_domain_redundancy(self, transcripts=None):
@@ -324,8 +328,7 @@ class Gene:
                 if transcript.refseq_id is None:
                     continue
                 domain_queue += [domain for domain in transcript.domains
-                                 if domain.source in ['SuperFamily', 'Yue'] and \
-                                 classification in domain.types]
+                                 if classification in domain.types]# and domain.source in ['SuperFamily', 'Yue']]
             # print("domain_queue:")
             # print(domain_queue)
             while len(domain_queue) > 0:
@@ -512,15 +515,15 @@ class Gene:
                                                                str(max(domain.start - exon_start, 0)).strip("<>"),
                                                                str(max(exon_end - domain.end, 0)).strip("<>")])] = domain
 
-                        exon_key = ".".join([str(location.start).strip("<>"),
-                                             str(location.end).strip("<>"),
-                                             prepend_seq,
-                                             str(tail_len)])
-                        if not exon_key in reformed_exons:
-                            reformed_exons[exon_key] = {'seq': this_seq.translate().seq, 'domains': exon_domains}
-                        else:
-                            reformed_exons[exon_key]['domains'].update(exon_domains)
-                        prepend_seq = str(next_location.extract(record).seq)
+                            exon_key = ".".join([str(location.start).strip("<>"),
+                                                 str(location.end).strip("<>"),
+                                                 prepend_seq,
+                                                 str(tail_len)])
+                            if not exon_key in reformed_exons:
+                                reformed_exons[exon_key] = {'seq': this_seq.translate().seq, 'domains': exon_domains}
+                            else:
+                                reformed_exons[exon_key]['domains'].update(exon_domains)
+                            prepend_seq = str(next_location.extract(record).seq)
 
         tmp = [el.split(".") for el in list(reformed_exons.keys())]
         for el in tmp:

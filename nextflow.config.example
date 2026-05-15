@@ -1,0 +1,13 @@
+conda.enabled = true
+
+params {
+    max_cpus = 4
+}
+process {
+    cpus = 1
+}
+
+params {
+    genes_file = "expressed_coding_isoforms_with_relative_tpm_threshold_1_geneIDs.txt"
+    binding_site_file = "../../../ppi_binding_sites.tsv"
+}

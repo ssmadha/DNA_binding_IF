@@ -20,7 +20,7 @@ process DOWNLOAD_GENE {
 
     script:
     """
-    download_gene.py -e ${gene_name} > ${gene_name}.txt
+    download_gene.py -e ${gene_name} -b ${params.binding_site_file} > ${gene_name}.txt
     """
 }
 

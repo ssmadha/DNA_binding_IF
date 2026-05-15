@@ -19,6 +19,8 @@ def get_args():
                             choices=["ppi", "dbi"],
                             default=["ppi"],
                             help="Which domain types to use. Options are %(choices)s. (Default: %(default)s)")
+    getoptions.add_argument("-b", "--bindingsitefile",
+                            help="File with binding sites")
 
     return getoptions.parse_args()
 
@@ -27,4 +29,5 @@ if __name__ == "__main__":
     args = get_args()
     print(args.ensgid)
     if args.ensgid.startswith("ENSG"):
-        test_gene = gene.Gene(args.ensgid, refmode=args.refmode, domain_filter=args.domains)
+        test_gene = gene.Gene(args.ensgid, binding_site_file= args.bindingsitefile, refmode=args.refmode,
+                              domain_filter=args.domains)
