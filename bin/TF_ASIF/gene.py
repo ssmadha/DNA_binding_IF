@@ -515,15 +515,15 @@ class Gene:
                                                                str(max(domain.start - exon_start, 0)).strip("<>"),
                                                                str(max(exon_end - domain.end, 0)).strip("<>")])] = domain
 
-                            exon_key = ".".join([str(location.start).strip("<>"),
-                                                 str(location.end).strip("<>"),
-                                                 prepend_seq,
-                                                 str(tail_len)])
-                            if not exon_key in reformed_exons:
-                                reformed_exons[exon_key] = {'seq': this_seq.translate().seq, 'domains': exon_domains}
-                            else:
-                                reformed_exons[exon_key]['domains'].update(exon_domains)
-                            prepend_seq = str(next_location.extract(record).seq)
+                        exon_key = ".".join([str(location.start).strip("<>"),
+                                             str(location.end).strip("<>"),
+                                             prepend_seq,
+                                             str(tail_len)])
+                        if not exon_key in reformed_exons:
+                            reformed_exons[exon_key] = {'seq': this_seq.translate().seq, 'domains': exon_domains}
+                        else:
+                            reformed_exons[exon_key]['domains'].update(exon_domains)
+                        prepend_seq = str(next_location.extract(record).seq)
 
         tmp = [el.split(".") for el in list(reformed_exons.keys())]
         for el in tmp:
