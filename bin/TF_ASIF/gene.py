@@ -1,6 +1,5 @@
 import random
 
-import biomart
 import ensembl_rest
 import mygene
 import pandas as pd
@@ -67,6 +66,8 @@ class Transcript:
         self.uniprot_id = self.get_uniprot_id()
         # print("UniProt ID: " + str(self.uniprot_id))
         self.refseq_id = self.get_refseq_id()
+        if self.uniprot_id is None or self.refseq_id is None:
+            return
         # print("RefSeq ID: " + str(self.refseq_id))
         self.seq = self.download_sequence()
         #print("Sequence: " + self.seq)
@@ -83,11 +84,9 @@ class Transcript:
         return seq
 
     def get_uniprot_id(self):
-        print(self.ensp_id)
         uniprot_ids = idmapping_df.loc[(idmapping_df[2].str.contains(self.ensp_id)) &
                                        (idmapping_df[1]=="Ensembl_PRO"), 0].tolist()
         if len(uniprot_ids)>0:
-            print(uniprot_ids)
             return uniprot_ids[0]
         else:
             return None
@@ -102,7 +101,6 @@ class Transcript:
                                       (idmapping_df[1]=="RefSeq") &
                                       (idmapping_df[2].str.startswith("NP_")), 2].tolist()
         if len(refseq_ids)>0:
-            print(refseq_ids[0])
             return refseq_ids[0]
         else:
             return None
