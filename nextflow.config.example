@@ -10,4 +10,5 @@ process {
 params {
     genes_file = "expressed_coding_isoforms_with_relative_tpm_threshold_1_geneIDs.txt"
     binding_site_file = "../../../ppi_binding_sites.tsv"
+    idmapping_file = "../../../HUMAN_9606_idmapping.filtered.dat"
 }

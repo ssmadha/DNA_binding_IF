@@ -9,8 +9,8 @@ from Bio.SeqFeature import SimpleLocation
 
 Entrez.email = "smadha@wpi.edu"
 
-server = biomart.BiomartServer('http://may2025.archive.ensembl.org/biomart')
-mart = server.datasets['hsapiens_gene_ensembl']
+# server = biomart.BiomartServer('http://may2025.archive.ensembl.org/biomart')
+# mart = server.datasets['hsapiens_gene_ensembl']
 
 #binding_site_df = pd.read_csv("../../../ppi_binding_sites.tsv", sep='\t', header=0)
 
@@ -64,10 +64,10 @@ class Transcript:
         self.enst_id = enst_id
         self.ensp_id = ensp_id
         # print("Ensembl ID: " + self.enst_id)
-        self.refseq_id = self.get_refseq_id()
-        # print("RefSeq ID: " + str(self.refseq_id))
         self.uniprot_id = self.get_uniprot_id()
         # print("UniProt ID: " + str(self.uniprot_id))
+        self.refseq_id = self.get_refseq_id()
+        # print("RefSeq ID: " + str(self.refseq_id))
         self.seq = self.download_sequence()
         #print("Sequence: " + self.seq)
         #self.domains = self.download_domains()
@@ -82,30 +82,29 @@ class Transcript:
         seq = ensembl_rest.sequence_id(ensp_id)["seq"]
         return seq
 
-    def get_refseq_id(self):
-        try:
-            attributes = ['refseq_peptide']
-            response = mart.search({'attributes': attributes,
-                                    'filters': {'ensembl_peptide_id': self.ensp_id}
-                                    })
-            data = response.raw.data.decode('ascii')
-            if data.strip()=="":
-                return None
-            return data.strip()
-        except:
+    def get_uniprot_id(self):
+        print(self.ensp_id)
+        uniprot_ids = idmapping_df.loc[(idmapping_df[2].str.contains(self.ensp_id)) &
+                                       (idmapping_df[1]=="Ensembl_PRO"), 0].tolist()
+        if len(uniprot_ids)>0:
+            print(uniprot_ids)
+            return uniprot_ids[0]
+        else:
             return None
 
-    def get_uniprot_id(self):
-        try:
-            attributes = ['uniprotswissprot']
-            response = mart.search({'attributes': attributes,
-                                    'filters': {'ensembl_peptide_id': self.ensp_id}
-                                    })
-            data = response.raw.data.decode('ascii')
-            if data.strip()=="":
+    def get_refseq_id(self, uniprot_id = None):
+        if uniprot_id is None:
+            if self.uniprot_id is not None:
+                uniprot_id = self.uniprot_id
+            else:
                 return None
-            return data.strip()
-        except:
+        refseq_ids = idmapping_df.loc[(idmapping_df[0].str.contains(uniprot_id)) &
+                                      (idmapping_df[1]=="RefSeq") &
+                                      (idmapping_df[2].str.startswith("NP_")), 2].tolist()
+        if len(refseq_ids)>0:
+            print(refseq_ids[0])
+            return refseq_ids[0]
+        else:
             return None
 
     def download_domains(self, ensp_id=None):
@@ -122,7 +121,7 @@ class Transcript:
             domains = []
         else:
             domains = self.domains
-        uniprot_id = self.uniprot_id
+        uniprot_id = self.uniprot_id.split("-")[0]
         for index_number in binding_site_df.index[binding_site_df["UniProt"] == uniprot_id]:
             binding_site_id = binding_site_df.loc[index_number, "ID"]
             binding_site_source = binding_site_df.loc[index_number, "Source"]
@@ -185,8 +184,8 @@ class Gene:
     transcripts = None
     superisoform_seq = None
     
-    def __init__(self, ensg_id: str, binding_site_file, biotype_filter=None, refmode="superisoform",
-                 domain_filter=None):
+    def __init__(self, ensg_id: str, binding_site_file, idmapping_file,
+                 biotype_filter=None, refmode="superisoform", domain_filter=None):
         """
         Initialize a Gene object based on Ensembl ID
 
@@ -195,6 +194,8 @@ class Gene:
         """
         global binding_site_df
         binding_site_df = pd.read_csv(binding_site_file, sep='\t', header=0)
+        global idmapping_df
+        idmapping_df = pd.read_csv(idmapping_file, sep='\t', header=None)
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
         if domain_filter is None:
@@ -333,17 +334,17 @@ class Gene:
             # print(domain_queue)
             while len(domain_queue) > 0:
                 currDomain = domain_queue.pop()
-                removeList = []
-                for i, domain in enumerate(domain_queue):
-                    if (currDomain.start <= domain.start <= currDomain.end) or \
-                            (currDomain.start <= domain.end <= currDomain.end) or \
-                            (currDomain.start >= domain.start and
-                             currDomain.end <= domain.end):
-                        if currDomain.end - currDomain.start < domain.end - domain.start:
-                            currDomain = domain
-                        removeList.append(i)
-                for i in removeList[-1::-1]:
-                    del domain_queue[i]
+                # removeList = []
+                # for i, domain in enumerate(domain_queue):
+                #     if (currDomain.start <= domain.start <= currDomain.end) or \
+                #             (currDomain.start <= domain.end <= currDomain.end) or \
+                #             (currDomain.start >= domain.start and
+                #              currDomain.end <= domain.end):
+                #         if currDomain.end - currDomain.start < domain.end - domain.start:
+                #             currDomain = domain
+                #         removeList.append(i)
+                # for i in removeList[-1::-1]:
+                #     del domain_queue[i]
                 currDomain.prot_id = transcript.refseq_id
                 keeping_domains.append(currDomain)
         # print("keeping_domains:")
