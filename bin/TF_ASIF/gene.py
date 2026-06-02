@@ -352,13 +352,13 @@ class Gene:
                 [domain for domain in keeping_domains if domain.prot_id == transcript.refseq_id]
 
     def generate_superisoform(self):
-        refseq_id = self.refseq_id
+        refseq_id_chrom = self.refseq_id
         symbol = self.symbol
         start_pos = self.start_pos
         end_pos = self.end_pos
         strand = self.strand
         handle = Entrez.efetch(db="nucleotide",
-                               id=refseq_id,
+                               id=refseq_id_chrom,
                                seq_start=start_pos,
                                seq_stop=end_pos,
                                rettype="gb")
