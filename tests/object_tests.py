@@ -8,7 +8,7 @@ class TestGene(unittest.TestCase):
         self.assertEqual(test_ensg_id, test_gene.ensg_id)  # add assertion here
         self.assertGreater(len(test_gene.download_transcripts()), 0)
         self.assertIsNotNone(test_gene.uniprot_id)
-        self.assertIsNotNone(test_gene.refseq_id)
+        self.assertIsNotNone(test_gene.refseq_id_chrom)
         self.assertIsNotNone(test_gene.symbol)
         self.assertGreater(test_gene.start_pos, 0)
         self.assertGreater(test_gene.end_pos, test_gene.start_pos)

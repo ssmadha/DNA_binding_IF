@@ -1,4 +1,5 @@
 import random
+import sys
 
 import ensembl_rest
 import mygene
@@ -7,11 +8,6 @@ from Bio import Entrez, SeqIO, SeqFeature, Align
 from Bio.SeqFeature import SimpleLocation
 
 Entrez.email = "smadha@wpi.edu"
-
-# server = biomart.BiomartServer('http://may2025.archive.ensembl.org/biomart')
-# mart = server.datasets['hsapiens_gene_ensembl']
-
-#binding_site_df = pd.read_csv("../../../ppi_binding_sites.tsv", sep='\t', header=0)
 
 class Domain:
     """
@@ -54,11 +50,11 @@ class Transcript:
     """
     Transcript object
     """
-    seq = None
+    prot_seq = None
     uniprot_id = None
     domains = []
 
-    def __init__(self, gene, enst_id: str, ensp_id: str, domain_types):
+    def __init__(self, gene, enst_id: str, ensp_id: str, domain_types: list):
         self.gene = gene
         self.enst_id = enst_id
         self.ensp_id = ensp_id
@@ -69,22 +65,25 @@ class Transcript:
         if self.uniprot_id is None or self.refseq_id is None:
             return
         # print("RefSeq ID: " + str(self.refseq_id))
-        self.seq = self.download_sequence()
-        #print("Sequence: " + self.seq)
+        #self.prot_seq = self.download_sequence()
+        #print("Sequence: " + self.prot_seq)
         #self.domains = self.download_domains()
         #print("Domains: " + str(self.domains))
         if 'ppi' in domain_types:
             self.domains = self.yue_ppi_locations()
         #print(len(self.domains))
 
-    def download_sequence(self, ensp_id=None):
-        if ensp_id==None:
+    def download_sequence(self, ensp_id: str=None):
+        if ensp_id is None:
             ensp_id = self.ensp_id
         seq = ensembl_rest.sequence_id(ensp_id)["seq"]
         return seq
 
-    def get_uniprot_id(self):
-        uniprot_ids = idmapping_df.loc[(idmapping_df[2].str.contains(self.ensp_id)) &
+    def get_uniprot_id(self, ensp_id=None):
+        if ensp_id is None:
+            ensp_id = self.ensp_id
+
+        uniprot_ids = idmapping_df.loc[(idmapping_df[2].str.contains(ensp_id)) &
                                        (idmapping_df[1]=="Ensembl_PRO"), 0].tolist()
         if len(uniprot_ids)>0:
             return uniprot_ids[0]
@@ -147,9 +146,9 @@ class Transcript:
         if refmode=="superisoform":
             ref_seq = self.gene.superisoform_seq
         else:
-            ref_seq = self.gene.transcripts[0].seq
+            ref_seq = self.gene.transcripts[0].prot_seq
         #print(ref_seq)
-        transcript_seq = self.seq
+        transcript_seq = self.prot_seq
         #print(transcript_seq)
         alignments = aligner.align(ref_seq, transcript_seq)
         superdomains = self.gene.superdomains
@@ -178,7 +177,7 @@ class Gene:
     """
     seq = None
     uniprot_id = None
-    refseq_id = None
+    refseq_id_chrom = None
     transcripts = None
     superisoform_seq = None
     
@@ -200,8 +199,8 @@ class Gene:
             domain_filter = ['ppi']
         self.ensg_id = ensg_id
         self.gene_info = self.download_gene_info()
-        self.uniprot_id, self.refseq_id, self.symbol = self.check_alternate_id()
-        if self.refseq_id is None:
+        self.uniprot_id, self.refseq_id_chrom, self.symbol = self.check_alternate_id()
+        if self.refseq_id_chrom is None:
             return
         self.start_pos, self.end_pos, self.strand = self.check_positions()
         # print("downloading transcripts")
@@ -303,18 +302,38 @@ class Gene:
             else:
                 raise
             return None
+
+        refseq_id_chrom, start_pos, end_pos, strand = self.refseq_id_chrom, self.start_pos, self.end_pos, self.strand
+        handle = Entrez.efetch(db="nucleotide",
+                               id=refseq_id_chrom,
+                               seq_start=start_pos,
+                               seq_stop=end_pos,
+                               rettype="gb")
+        record = SeqIO.read(handle, "gb")
+        handle.close()
+
         transcripts = []
         for isoform in isoforms["Transcript"]:
             if isoform['biotype'] not in biotype_filter:
                 continue
-            # try:
-            transcript = Transcript(self, isoform['id'], isoform['Translation']['id'], domain_types)
-            if transcript.refseq_id is not None and transcript.uniprot_id is not None:
-                transcript.seq = transcript.download_sequence()
-                #transcript.yue_ppi_locations()
-                transcripts.append(transcript)
-            # except:
-            #     print("Error getting transcript: " + isoform['id'])
+            try:
+                transcript = Transcript(self, isoform['id'], isoform['Translation']['id'], domain_types)
+                if transcript.refseq_id is not None and transcript.uniprot_id is not None:
+                    prot_seq = None
+                    for feature in record.features:
+                        if feature.type == "CDS" and transcript.refseq_id in feature.qualifiers['protein_id'][0]:
+                            rna_seq = feature.location.extract(record).seq
+                            prot_seq = rna_seq.translate()
+                            exon_start = 0
+                            for part in feature.location.parts:
+                                break
+                    if prot_seq is None:
+                        prot_seq = transcript.download_sequence()
+                    transcript.prot_seq = prot_seq
+                    #transcript.yue_ppi_locations()
+                    transcripts.append(transcript)
+            except Exception as err:
+                print("Error getting transcript: " + isoform['id'], "with error", err, file=sys.stderr)
         return transcripts
 
     def check_domain_redundancy(self, transcripts=None):
@@ -352,7 +371,7 @@ class Gene:
                 [domain for domain in keeping_domains if domain.prot_id == transcript.refseq_id]
 
     def generate_superisoform(self):
-        refseq_id_chrom = self.refseq_id
+        refseq_id_chrom = self.refseq_id_chrom
         symbol = self.symbol
         start_pos = self.start_pos
         end_pos = self.end_pos
