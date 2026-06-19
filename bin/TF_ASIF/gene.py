@@ -134,7 +134,7 @@ class Transcript:
             domain.types=["PPI"]
         return domains
 
-    def align_to_reference(self, refmode="superisoform"):
+    def align_to_reference(self, refmode="superisoform", alignmode="global"):
         aligner = Align.PairwiseAligner()
         aligner.match_score = 10
         aligner.mismatch_score = -15
@@ -312,6 +312,8 @@ class Gene:
         record = SeqIO.read(handle, "gb")
         handle.close()
 
+        features = [feature for feature in record.features if feature.type=="CDS"]
+
         transcripts = []
         for isoform in isoforms["Transcript"]:
             if isoform['biotype'] not in biotype_filter:
@@ -320,13 +322,26 @@ class Gene:
                 transcript = Transcript(self, isoform['id'], isoform['Translation']['id'], domain_types)
                 if transcript.refseq_id is not None and transcript.uniprot_id is not None:
                     prot_seq = None
-                    for feature in record.features:
-                        if feature.type == "CDS" and transcript.refseq_id in feature.qualifiers['protein_id'][0]:
+                    for feature in features:
+                        if transcript.refseq_id in feature.qualifiers['protein_id'][0]:
                             rna_seq = feature.location.extract(record).seq
                             prot_seq = rna_seq.translate()
-                            exon_start = 0
+
+                            exons_rna = []
+                            exons_prot = []
+                            exon_rna_start = 0
                             for part in feature.location.parts:
-                                break
+                                exon_rna_end = len(part) + exon_rna_start
+                                exons_rna += [SimpleLocation(exon_rna_start, exon_rna_end)]
+                                exon_prot_start = (exon_rna_start - exon_rna_start%3)//3
+                                exons_prot += [SimpleLocation(exon_prot_start, exon_rna_end//3)]
+                                exon_rna_start = exon_rna_end
+
+                            transcript.rna_seq = rna_seq
+                            transcript.exons_rna = exons_rna
+                            transcript.exons_prot = exons_prot
+                            break
+
                     if prot_seq is None:
                         prot_seq = transcript.download_sequence()
                     transcript.prot_seq = prot_seq
