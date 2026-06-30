@@ -77,25 +77,13 @@ for gene in common_genes:
     # Save plot
     plt.savefig(f"kulakovskiy_data/corr_graphs/{gene}_scatter.png", dpi=300, bbox_inches="tight")
 
+    plt.close()
 
-corrs = np.array(corrs)
-print(corrs.mean())
+
+print(np.array(list(corrs.values())).mean())
 
 unique_motifs = motif_info.loc[motif_info["Cluster_Size"]<2, "Representative_Motif"].map(lambda x: x.split(".")[0]).tolist()
 
 unique_corrs = {gene: corrs[gene] for gene in unique_motifs if gene in common_genes}
-unique_corrs = []
-for gene in common_genes:
-    mask_asif = asif_df_common.index.get_level_values("Gene Name").isin(unique_motifs)
-    mask_maradoner = maradoner_df_common.index.get_level_values("GeneID").isin(unique_motifs)
 
-    print(gene)
-    x = asif_df_common.loc[mask_asif, :].to_numpy().ravel()
-    y = maradoner_df_common.loc[mask_maradoner, :].to_numpy().ravel()
-
-    corr = pd.Series(x).corr(pd.Series(y))
-    print(corr)
-    unique_corrs.append(corr)
-
-unique_corrs = np.array(unique_corrs)
-print(unique_corrs.mean())
+print(np.array(list(unique_corrs.values())).mean())
