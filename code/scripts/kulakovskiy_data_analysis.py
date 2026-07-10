@@ -7,9 +7,9 @@ maradoner_df = pd.read_table("kulakovskiy_data/MARAdoner_activities.tsv", index_
 maradoner_df = maradoner_df.set_index(maradoner_df.index.map(lambda x: x.split(".")[0]), append=True)
 maradoner_df.index = maradoner_df.index.set_names(["MotifID", "GeneID"])
 
-motif_info = pd.read_table("kulakovskiy_data/SupplementaryTable11_MARA_Clusters.v2026.2.tsv")
+motif_info = pd.read_excel("kulakovskiy_data/SupplementaryTable11_MARA_Clusters.v2026.2.xlsx", sheet_name="TableS11")
 
-asif_df = pd.read_table("visualization/asif/ASIF.csv", sep=",", index_col=[0,1])
+asif_df = pd.read_table("visualization/asif/ASIF.csv", sep=",", index_col=[0, 1])
 
 asif_DBD = pickle.load(open("dbd_impact_factors1.pickle", "rb"))
 asif_DBD_df = pd.DataFrame.from_dict(asif_DBD, orient="index")
@@ -65,7 +65,7 @@ exp_transcript_df = (
 )
 
 # Add Gene ID column to the new dataframe
-asif_transcript_df["Gene Name"] = asif_transcript_df.index.map(gene_map)
+asif_transcript_df["Gene Name"] = asif_transcript_df.index.get_level_values("Gene ID").map(gene_map)
 
 # Make a MultiIndex
 asif_transcript_df = (
@@ -111,13 +111,22 @@ common_genes = maradoner_df.index.get_level_values(1).intersection(asif_df.index
 asif_df_common = asif_df.loc[pd.IndexSlice[:, common_genes], common_columns.keys()]
 asif_df_common = asif_df_common.rename(columns=common_columns)
 
+asif_transcript_df_common = asif_transcript_df.loc[:, common_columns.keys()]
+
 maradoner_df_common = maradoner_df.loc[pd.IndexSlice[:, common_genes], common_columns.values()]
 
+gene_name_to_id = (
+    asif_df.index.to_frame(index=False)
+    .drop_duplicates("Gene Name")
+    .set_index("Gene Name")["Gene ID"]
+)
 corrs = dict()
 for gene in common_genes:
     mask_asif = asif_df_common.index.get_level_values("Gene Name").isin([gene])
     mask_maradoner = maradoner_df_common.index.get_level_values("GeneID").isin([gene])
+
     print(gene)
+
     x = asif_df_common.loc[mask_asif, :].to_numpy().ravel()
     y = maradoner_df_common.loc[mask_maradoner, :].mean(axis=0).to_numpy()
 
@@ -133,6 +142,30 @@ for gene in common_genes:
 
     plt.figure(figsize=(5, 5))
     plt.scatter(x, y)
+    gene_id = gene_name_to_id.get(gene)
+
+    if gene_id is not None:
+        mask_transcripts = (
+                asif_transcript_df_common.index.get_level_values("Gene ID") == gene_id
+        )
+
+        transcript_df = asif_transcript_df_common.loc[mask_transcripts]
+
+        for transcript_id, row in transcript_df.iterrows():
+            xt = row.to_numpy()
+
+            valid = ~(pd.isna(xt) | pd.isna(y))
+
+            plt.scatter(
+                xt[valid],
+                y[valid],
+                s=20,
+                alpha=0.6,
+                marker="x",
+                label="Transcript" if transcript_id == transcript_df.index[0] else None,
+            )
+
+    plt.xlim([0, 1])
     plt.xlabel("ASIF")
     plt.ylabel("Maradoner (mean)")
     plt.title(f"{gene}\nPearson r = {corr:.3f}")

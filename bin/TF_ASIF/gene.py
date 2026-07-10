@@ -15,6 +15,15 @@ class Domain:
     """
 
     def __init__(self, interpro_id, start, end, source, pos=None, **kwargs):
+        """
+        Constructor
+
+        param interpro_id: interpro id
+        param start: start position
+        param end: end position
+        param source: source
+        param pos: position
+        """
         self.interpro_id = interpro_id
         self.start = start
         self.end = end
@@ -26,6 +35,9 @@ class Domain:
             self.pos = pos
 
     def determine_types(self):
+        """
+        Determine the types of this domain
+        """
         types = []
         if self.determine_dna_binding():
             types.append("DNA-binding")
@@ -34,6 +46,11 @@ class Domain:
         return types
 
     def determine_dna_binding(self, dna_binding_file="../../../interpro_superfamily_domains_DBD.tsv"):
+        """
+        Determine if this domain is a DNA-binding domain
+
+        param dna_binding_file: file containing DNA-binding domains
+        """
         interpro_superfamily_domains_DBD = pd.read_csv(dna_binding_file, sep='\t', index_col=0)
         if self.interpro_id is None or self.source!="SuperFamily":
             return False
@@ -55,6 +72,14 @@ class Transcript:
     domains = []
 
     def __init__(self, gene, enst_id: str, ensp_id: str, domain_types: list):
+        """
+        Constructor
+
+        param gene: parent gene object
+        param enst_id: Ensembl Transcript ID
+        param ensp_id: Ensembl Protein ID
+        param domain_types: list of domain types to use
+        """
         self.gene = gene
         self.enst_id = enst_id
         self.ensp_id = ensp_id
@@ -73,13 +98,23 @@ class Transcript:
             self.domains = self.yue_ppi_locations()
         #print(len(self.domains))
 
-    def download_sequence(self, ensp_id: str=None):
+    def download_sequence(self, ensp_id=None):
+        """
+        Download the protein sequence of this transcript
+
+        param ensp_id: Ensembl Protein ID
+        """
         if ensp_id is None:
             ensp_id = self.ensp_id
         seq = ensembl_rest.sequence_id(ensp_id)["seq"]
         return seq
 
     def get_uniprot_id(self, ensp_id=None):
+        """
+        Identify the uniprot id of this transcript
+
+        param ensp_id: Ensembl Protein ID
+        """
         if ensp_id is None:
             ensp_id = self.ensp_id
 
@@ -91,6 +126,11 @@ class Transcript:
             return None
 
     def get_refseq_id(self, uniprot_id = None):
+        """
+        Identify the refseq id of this transcript
+
+        param uniprot_id: UniProt ID
+        """
         if uniprot_id is None:
             if self.uniprot_id is not None:
                 uniprot_id = self.uniprot_id
@@ -186,8 +226,7 @@ class Gene:
         """
         Initialize a Gene object based on Ensembl ID
 
-        params:
-
+        param ensg_id: Ensembl Gene ID
         """
         global binding_site_df
         binding_site_df = pd.read_csv(binding_site_file, sep='\t', header=0)
