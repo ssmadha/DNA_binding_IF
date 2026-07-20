@@ -120,7 +120,14 @@ gene_name_to_id = (
     .drop_duplicates("Gene Name")
     .set_index("Gene Name")["Gene ID"]
 )
+
 corrs = dict()
+corrs1 = dict()
+corrs2 = dict()
+corrs3 = dict()
+corrs4 = dict()
+corrs5 = dict()
+corrs6 = dict()
 for gene in common_genes:
     mask_asif = asif_df_common.index.get_level_values("Gene Name").isin([gene])
     mask_maradoner = maradoner_df_common.index.get_level_values("GeneID").isin([gene])
@@ -168,11 +175,40 @@ for gene in common_genes:
     plt.xlim([0, 1])
     plt.xlabel("ASIF")
     plt.ylabel("Maradoner (mean)")
-    plt.title(f"{gene}\nPearson r = {corr:.3f}")
+    plt.title(f"{gene}\nPearson r = {corr:.3f}; x.var() = {x.var()}")
     plt.tight_layout()
 
+    save_folder = ""
+    if x.var() < 0.001:
+        save_folder = "Category6/"
+        corrs6[gene] = corr
+    #Category 1: As expected negatively correlated
+    elif corr < -0.1:
+        save_folder = "Category1/"
+        corrs1[gene] = corr
+    #Category 2: Anti-expected positive correlated
+    elif corr > 0.1:
+        save_folder = "Category2/"
+        corrs2[gene] = corr
+    #Category 3: Not much change at 0
+    elif -3 < y.mean() < 3:
+        save_folder = "Category3/"
+        corrs3[gene] = corr
+    #Category 4: Not much change positive
+    elif y.mean() > 3:
+        save_folder = "Category4/"
+        corrs4[gene] = corr
+    #Category 5: Not much change negative
+    elif y.mean() < -3:
+        save_folder = "Category5/"
+        corrs5[gene] = corr
+    #Category 6: random
+    else:
+        save_folder = "Category6/"
+        corrs6[gene] = corr
+
     # Save plot
-    plt.savefig(f"kulakovskiy_data/corr_graphs/{gene}_scatter.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"kulakovskiy_data/corr_graphs/{save_folder}{gene}_scatter.png", dpi=300, bbox_inches="tight")
 
     plt.close()
 
@@ -181,7 +217,7 @@ print(np.array(list(corrs.values())).mean())
 
 unique_motifs = motif_info.loc[motif_info["Cluster_Size"]<2, "Representative_Motif"].map(lambda x: x.split(".")[0]).tolist()
 
-unique_corrs = {gene: corrs[gene] for gene in unique_motifs if gene in common_genes}
+unique_corrs = {str(gene): corrs[gene] for gene in unique_motifs if gene in common_genes}
 
 print(np.array(list(unique_corrs.values())).mean())
 
@@ -224,6 +260,6 @@ print(np.array(list(corrs_DBD.values())).mean())
 
 unique_motifs = motif_info.loc[motif_info["Cluster_Size"]<2, "Representative_Motif"].map(lambda x: x.split(".")[0]).tolist()
 
-unique_corrs_DBD = {gene: corrs_DBD[gene] for gene in unique_motifs if gene in common_genes}
+unique_corrs_DBD = {str(gene): corrs_DBD[gene] for gene in unique_motifs if gene in common_genes}
 
 print(np.array(list(unique_corrs_DBD.values())).mean())

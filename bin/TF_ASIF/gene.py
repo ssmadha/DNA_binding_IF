@@ -28,7 +28,7 @@ class Domain:
         self.start = start
         self.end = end
         self.source = source
-        #self.types = self.determine_types()
+        self.types = self.determine_types()
         if pos is None:
             self.pos = SeqFeature.SeqFeature(SeqFeature.FeatureLocation(start, end))
         else:
@@ -45,14 +45,15 @@ class Domain:
             types.append("PPI")
         return types
 
-    def determine_dna_binding(self, dna_binding_file="../../../interpro_superfamily_domains_DBD.tsv"):
+    def determine_dna_binding(self, dna_binding_file="/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/interpro_superfamily_domains_DBD.tsv"):
         """
         Determine if this domain is a DNA-binding domain
 
         param dna_binding_file: file containing DNA-binding domains
         """
         interpro_superfamily_domains_DBD = pd.read_csv(dna_binding_file, sep='\t', index_col=0)
-        if self.interpro_id is None or self.source!="SuperFamily":
+        if (self.interpro_id is None or self.source!="SuperFamily" or
+                self.interpro_id not in interpro_superfamily_domains_DBD.index):
             return False
         return interpro_superfamily_domains_DBD.loc[self.interpro_id,"DNA-binding"]
 
@@ -70,6 +71,8 @@ class Transcript:
     prot_seq = None
     uniprot_id = None
     domains = []
+    exons_rna = None
+    exons_prot = None
 
     def __init__(self, gene, enst_id: str, ensp_id: str, domain_types: list):
         """
@@ -92,10 +95,8 @@ class Transcript:
         # print("RefSeq ID: " + str(self.refseq_id))
         #self.prot_seq = self.download_sequence()
         #print("Sequence: " + self.prot_seq)
-        #self.domains = self.download_domains()
+        self.domains = self.download_domains(domain_types=domain_types)
         #print("Domains: " + str(self.domains))
-        if 'ppi' in domain_types:
-            self.domains = self.yue_ppi_locations()
         #print(len(self.domains))
 
     def download_sequence(self, ensp_id=None):
@@ -144,20 +145,25 @@ class Transcript:
         else:
             return None
 
-    def download_domains(self, ensp_id=None):
+    def download_domains(self, ensp_id=None, domain_types=None):
+        if domain_types is None:
+            domain_types = ["ppi_domain", "dbi"]
+        domains = []
         if ensp_id is None:
             ensp_id = self.ensp_id
-        results = ensembl_rest.overlap_translation(ensp_id,
+        if "ppi_domain" in domain_types or "dbi" in domain_types:
+            results = ensembl_rest.overlap_translation(ensp_id,
                                                    type="domain")
-        return [Domain(interpro_id=res["interpro"], source = res["type"], **res) for res in results]
+            domains += [Domain(interpro_id=res["interpro"], source = res["type"], **res)
+                        for res in results if res["type"] == "SuperFamily"]
+        if "ppi_bs" in domain_types:
+            domains += self.yue_ppi_locations()
+        return domains
 
     def yue_ppi_locations(self):
         if self.uniprot_id is None:
             return
-        if self.domains is None:
-            domains = []
-        else:
-            domains = self.domains
+        domains = []
         uniprot_id = self.uniprot_id.split("-")[0]
         for index_number in binding_site_df.index[binding_site_df["UniProt"] == uniprot_id]:
             binding_site_id = binding_site_df.loc[index_number, "ID"]
@@ -211,6 +217,26 @@ class Transcript:
         print(len(isoform_coverage_percentages))
         print(list(isoform_coverage_percentages.values()))
 
+    def __repr__(self):
+        return_string = "Transcript Ensembl ID: {}".format(self.enst_id)
+        return_string += "\n Part of Gene: {}".format(self.gene.ensg_id)
+        return_string += "\n Uniprot ID: {}".format(self.uniprot_id)
+        if self.refseq_id is not None:
+            return_string += "\n RefSeq ID: {}".format(self.refseq_id)
+            return_string += "\n RNA Exons at: {}".format(self.exons_rna)
+            return_string += "\n Protein Exons at: {}".format(self.exons_prot)
+        return return_string
+
+    def __str__(self):
+        return_string = "Transcript Ensembl ID: {}".format(self.enst_id)
+        return_string += "\n Part of Gene: {}".format(self.gene.ensg_id)
+        return_string += "\n Uniprot ID: {}".format(self.uniprot_id)
+        if self.refseq_id is not None:
+            return_string += "\n RefSeq ID: {}".format(self.refseq_id)
+            return_string += "\n RNA Exons at: {}".format(self.exons_rna)
+            return_string += "\n Protein Exons at: {}".format(self.exons_prot)
+        return return_string
+
 class Gene:
     """
     Gene object
@@ -218,7 +244,7 @@ class Gene:
     seq = None
     uniprot_id = None
     refseq_id_chrom = None
-    transcripts = None
+    transcripts = []
     superisoform_seq = None
     
     def __init__(self, ensg_id: str, binding_site_file, idmapping_file,
@@ -235,7 +261,7 @@ class Gene:
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
         if domain_filter is None:
-            domain_filter = ['ppi']
+            domain_filter = ["ppi_domain", "dbi"]
         self.ensg_id = ensg_id
         self.gene_info = self.download_gene_info()
         self.uniprot_id, self.refseq_id_chrom, self.symbol = self.check_alternate_id()
@@ -357,37 +383,37 @@ class Gene:
         for isoform in isoforms["Transcript"]:
             if isoform['biotype'] not in biotype_filter:
                 continue
-            try:
-                transcript = Transcript(self, isoform['id'], isoform['Translation']['id'], domain_types)
-                if transcript.refseq_id is not None and transcript.uniprot_id is not None:
-                    prot_seq = None
-                    for feature in features:
-                        if transcript.refseq_id in feature.qualifiers['protein_id'][0]:
-                            rna_seq = feature.location.extract(record).seq
-                            prot_seq = rna_seq.translate()
+            # try:
+            transcript = Transcript(self, isoform['id'], isoform['Translation']['id'], domain_types)
+            if transcript.refseq_id is not None and transcript.uniprot_id is not None:
+                prot_seq = None
+                for feature in features:
+                    if transcript.refseq_id in feature.qualifiers['protein_id'][0]:
+                        rna_seq = feature.location.extract(record).seq
+                        prot_seq = rna_seq.translate()
 
-                            exons_rna = []
-                            exons_prot = []
-                            exon_rna_start = 0
-                            for part in feature.location.parts:
-                                exon_rna_end = len(part) + exon_rna_start
-                                exons_rna += [SimpleLocation(exon_rna_start, exon_rna_end)]
-                                exon_prot_start = (exon_rna_start - exon_rna_start%3)//3
-                                exons_prot += [SimpleLocation(exon_prot_start, exon_rna_end//3)]
-                                exon_rna_start = exon_rna_end
+                        exons_rna = []
+                        exons_prot = []
+                        exon_rna_start = 0
+                        for part in feature.location.parts:
+                            exon_rna_end = len(part) + exon_rna_start
+                            exons_rna += [SimpleLocation(exon_rna_start, exon_rna_end)]
+                            exon_prot_start = (exon_rna_start - exon_rna_start%3)//3
+                            exons_prot += [SimpleLocation(exon_prot_start, exon_rna_end//3)]
+                            exon_rna_start = exon_rna_end
 
-                            transcript.rna_seq = rna_seq
-                            transcript.exons_rna = exons_rna
-                            transcript.exons_prot = exons_prot
-                            break
+                        transcript.rna_seq = rna_seq
+                        transcript.exons_rna = exons_rna
+                        transcript.exons_prot = exons_prot
+                        break
 
-                    if prot_seq is None:
-                        prot_seq = transcript.download_sequence()
-                    transcript.prot_seq = prot_seq
-                    #transcript.yue_ppi_locations()
-                    transcripts.append(transcript)
-            except Exception as err:
-                print("Error getting transcript: " + isoform['id'], "with error", err, file=sys.stderr)
+                if prot_seq is None:
+                    prot_seq = transcript.download_sequence()
+                transcript.prot_seq = prot_seq
+                #transcript.yue_ppi_locations()
+                transcripts.append(transcript)
+            # except Exception as err:
+            #     print("Error getting transcript: " + isoform['id'], "with error", err, file=sys.stderr)
         return transcripts
 
     def check_domain_redundancy(self, transcripts=None):
@@ -425,6 +451,24 @@ class Gene:
                 [domain for domain in keeping_domains if domain.prot_id == transcript.refseq_id]
 
     def generate_superisoform(self):
+
+        superisoform_exon = ""
+        superisoform_exons = []
+        for transcript in self.transcripts:
+            if transcript.refseq_id is not None:
+                for exon in transcript.exons_prot:
+                    exon_seq = str(exon.extract(transcript.prot_seq))
+                    if exon_seq not in superisoform_exon:
+                        print(transcript.domains)
+                        superisoform_exon += exon_seq
+                        if len(superisoform_exons)==0:
+                            superisoform_exons.append(exon)
+                        else:
+                            superisoform_exons.append(SimpleLocation(superisoform_exons[-1].end,
+                                                                     superisoform_exons[-1].end + exon.end - exon.start))
+                        print(superisoform_exons)
+
+
         refseq_id_chrom = self.refseq_id_chrom
         symbol = self.symbol
         start_pos = self.start_pos

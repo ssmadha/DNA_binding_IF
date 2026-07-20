@@ -16,8 +16,8 @@ def get_args():
                                   Reference isoform not currently supported.")
     getoptions.add_argument("-d", "--domains",
                             nargs="*",
-                            choices=["ppi", "dbi"],
-                            default=["ppi"],
+                            choices=["ppi_domain", "ppi_bs", "dbi"],
+                            default=["ppi_domain", "dbi"],
                             help="Which domain types to use. Options are %(choices)s. (Default: %(default)s)")
     getoptions.add_argument("-b", "--bindingsitefile",
                             help="File with binding sites")
