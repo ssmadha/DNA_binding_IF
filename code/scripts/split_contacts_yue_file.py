@@ -1,6 +1,6 @@
 import pandas as pd
 
-yue_df = pd.read_csv("../../merged_ppi.tsv", sep='\t')
+yue_df = pd.read_csv("../../merged_ppi_6_angstrom.tsv", sep='\t')
 
 contacts_a_df = yue_df[["protein_I_II", "protein_A", "contact_A", "source"]]
 contacts_b_df = yue_df[["protein_I_II", "protein_B", "contact_B", "source"]]

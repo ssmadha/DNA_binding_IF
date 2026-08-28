@@ -6,9 +6,11 @@ import numpy as np
 alpha = 63
 beta = 0.3
 
-coverage_df = pd.read_csv("results_17k/results/individual/all_results.txt", sep='\t', header=None)
+#all_results.txt command:
+#awk '{if($0~/ENSG/ && FNR!=1){printf "\n"$0} else if($0~/ENST/ || $0~/^[0-9]+$/){printf "\t"$1} else if($0~/^\[[0-9]/){printf "\t"$0}}' *.txt | awk '$3!=0' > all_results.txt
+coverage_df = pd.read_csv("../../results_17k_redone/results/individual/all_results.txt", sep='\t', header=None)
 coverage_df.columns = ["gene_id", "transcript_id", "n_domains", "domain_coverage"]
-TPM_df = pd.read_csv("expressed_coding_isoforms_with_relative_tpm_threshold_1.tsv", sep='\t')
+TPM_df = pd.read_csv("../../expressed_coding_isoforms_with_relative_tpm_threshold_1.tsv", sep='\t')
 
 full_df = pd.merge(coverage_df, TPM_df)
 
@@ -36,4 +38,4 @@ for i in range(full_df.shape[0]):
     else:
         asif_df = pd.concat([asif_df, pd.DataFrame([new_row])])
 
-asif_df.to_csv("PPI_ASIF_table1.tsv", sep='\t', index=False)
+asif_df.to_csv("../../PPI_ASIF_table2.tsv", sep='\t', index=False)
