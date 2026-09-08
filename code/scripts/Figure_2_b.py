@@ -50,3 +50,4 @@ axes[3].set_ylabel("Number of Genes")
 
 plt.tight_layout()
 plt.show()
+plt.savefig("Figure_2_b.png")
