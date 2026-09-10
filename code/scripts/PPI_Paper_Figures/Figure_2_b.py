@@ -48,21 +48,18 @@ n_total = len(bc_proteins | w_proteins)
 
 def plot_binding_hist(ax, counts, title, fontsize=8):
 
-    # Collapse everything above 20 into 21
-    # (21 will be displayed as ">20")
-    counts_plot = counts.clip(upper=51)
+    # Collapse everything above 20 into >20
+    counts_plot = counts.clip(upper=21)
 
     # Bins for 1, 2, ..., 20, and >20
-    bins = range(1, 53)
+    bins = range(1, 23)
 
     ax.hist(
         counts_plot,
         bins=bins,
-        align="left"
+        align="left",
+        rwidth=0.5       # Add space between bars
     )
-
-    # Log10 y-axis
-    ax.set_yscale("log")
 
     ax.set_title(title, fontsize=fontsize)
 
@@ -81,17 +78,15 @@ def plot_binding_hist(ax, counts, title, fontsize=8):
         labelsize=fontsize - 1
     )
 
-    # Put the final tick at 21 but label it >20
-    ticks = list(range(1, 51)) + [51]
+    # Label the final bin as >20
+    ticks = list(range(1, 21)) + [21]
 
     ax.set_xticks(ticks)
     ax.set_xticklabels(
-        [str(i) for i in range(1, 51)] + [">50"]
+        [str(i) for i in range(1, 21)] + [">20"]
     )
 
-    # Make sure all three histograms use the same x range
-    ax.set_xlim(0.5, 51.5)
-
+    ax.set_xlim(0.5, 21.5)
 
 # ============================================================
 # Main plot: Total
@@ -220,4 +215,6 @@ ax_venn.text(
 
 
 plt.tight_layout()
+
+plt.savefig("Figure_2_b.png")
 plt.show()
