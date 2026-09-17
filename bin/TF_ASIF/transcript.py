@@ -27,6 +27,12 @@ class Transcript:
         enst_id: Ensembl Transcript ID
         ensp_id: Ensembl Protein ID
         domain_types: list of domain types to use
+        binding_site_df: pd.DataFrame
+            Data frame of PPI binding sites, used when "ppi_bs" is in
+            domain_types.
+        idmapping_df: pd.DataFrame
+            UniProt ID mapping data frame, used to resolve this
+            transcript's UniProt and RefSeq IDs.
         """
         self.gene = gene
         self.enst_id = enst_id
@@ -51,6 +57,11 @@ class Transcript:
         Parameters
         ----------
         ensp_id: Ensembl Protein ID
+
+        Returns
+        -------
+        str
+            Protein sequence for ensp_id, from the Ensembl REST API.
         """
         if ensp_id is None:
             ensp_id = self.ensp_id
@@ -63,7 +74,16 @@ class Transcript:
 
         Parameters
         ----------
+        idmapping_df: pd.DataFrame
+            UniProt ID mapping data frame to search for a row mapping
+            ensp_id to a UniProt ID.
         ensp_id: Ensembl Protein ID
+
+        Returns
+        -------
+        str or None
+            The first matching UniProt ID, or None if ensp_id is not
+            found in idmapping_df.
         """
         if ensp_id is None:
             ensp_id = self.ensp_id
@@ -81,7 +101,17 @@ class Transcript:
 
         Parameters
         ----------
+        idmapping_df: pd.DataFrame
+            UniProt ID mapping data frame to search for a row mapping
+            uniprot_id to a RefSeq protein ID.
         uniprot_id: UniProt ID
+
+        Returns
+        -------
+        str or None
+            The first matching RefSeq protein ID (starting with "NP_"),
+            or None if uniprot_id is not found in idmapping_df or is
+            unavailable.
         """
         if uniprot_id is None:
             if self.uniprot_id is not None:
@@ -98,16 +128,26 @@ class Transcript:
 
     def download_domains(self, ensp_id=None, domain_types=None, binding_site_df: pd.DataFrame | None = None):
         """
+        Download this transcript's domains from Ensembl and/or the
+        PPI binding site data, depending on domain_types.
 
         Parameters
         ----------
-        ensp_id :
-        domain_types :
-        binding_site_df :
+        ensp_id : str, optional
+            Ensembl Protein ID. Defaults to self.ensp_id.
+        domain_types : list, optional
+            Domain types to include. "ppi_domain" or "dbi" fetch
+            SuperFamily domains from the Ensembl REST API; "ppi_bs"
+            fetches PPI binding sites via yue_ppi_locations. Defaults
+            to ["ppi_domain", "dbi"].
+        binding_site_df : pd.DataFrame, optional
+            Data frame of PPI binding sites, required when "ppi_bs"
+            is in domain_types.
 
         Returns
         -------
-
+        list[Domain]
+            Domains found for this transcript.
         """
         if domain_types is None:
             domain_types = ["ppi_domain", "dbi"]
@@ -160,11 +200,19 @@ class Transcript:
 
     def align_to_reference(self, refmode="superisoform", alignmode="global"):
         """
+        Globally align this transcript's protein sequence to a
+        reference sequence, and print the coverage percentage of each
+        superdomain that overlaps the best-covering alignment.
 
         Parameters
         ----------
-        refmode :
-        alignmode :
+        refmode : str, optional
+            If "superisoform", aligns against self.gene.superisoform_seq.
+            Otherwise, aligns against the protein sequence of the
+            gene's first transcript.
+        alignmode : str, optional
+            Intended alignment mode for the pairwise aligner. Currently
+            unused; the aligner mode is hardcoded to "global".
         """
         aligner = Align.PairwiseAligner()
         aligner.match_score = 10
@@ -204,10 +252,14 @@ class Transcript:
 
     def __repr__(self):
         """
+        Build a human-readable representation of this transcript.
 
         Returns
         -------
-
+        str
+            Multi-line string with this transcript's Ensembl ID,
+            parent gene, UniProt ID, and (if resolved) RefSeq ID and
+            exon locations.
         """
         return_string = "Transcript Ensembl ID: {}".format(self.enst_id)
         return_string += "\n Part of Gene: {}".format(self.gene.ensg_id)
@@ -220,10 +272,14 @@ class Transcript:
 
     def __str__(self):
         """
+        Build a human-readable representation of this transcript.
 
         Returns
         -------
-
+        str
+            Multi-line string with this transcript's Ensembl ID,
+            parent gene, UniProt ID, and (if resolved) RefSeq ID and
+            exon locations.
         """
         return_string = "Transcript Ensembl ID: {}".format(self.enst_id)
         return_string += "\n Part of Gene: {}".format(self.gene.ensg_id)

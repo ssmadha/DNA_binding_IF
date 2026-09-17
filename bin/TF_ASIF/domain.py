@@ -32,6 +32,13 @@ class Domain:
     def determine_types(self):
         """
         Determine the types of this domain
+
+        Returns
+        -------
+        list[str]
+            Subset of ["DNA-binding", "PPI"] that this domain belongs
+            to, based on determine_dna_binding and
+            determine_protein_interaction.
         """
         types = []
         if self.determine_dna_binding():
@@ -48,6 +55,14 @@ class Domain:
         ----------
         dna_binding_file: str
             file containing DNA-binding domains
+
+        Returns
+        -------
+        bool
+            True if this domain's interpro_id is listed as DNA-binding
+            in dna_binding_file. False if the domain has no interpro_id,
+            is not sourced from SuperFamily, or is not found in the
+            file.
         """
         interpro_superfamily_domains_DBD = pd.read_csv(dna_binding_file, sep='\t', index_col=0)
         if (self.interpro_id is None or self.source!="SuperFamily" or
@@ -57,13 +72,25 @@ class Domain:
 
     def determine_protein_interaction(self):
         """
+        Determine if this domain is a protein-protein interaction
+        domain. Not yet implemented.
 
         Returns
         -------
-
+        bool
+            Always False.
         """
         return False
 
     def __repr__(self):
+        """
+        Build a human-readable representation of this domain.
+
+        Returns
+        -------
+        str
+            String with this domain's interpro_id, position, and
+            types.
+        """
         return "Interpro ID %s at %s of types %s" % (self.interpro_id, self.pos, self.types)
 

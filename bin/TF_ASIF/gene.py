@@ -11,8 +11,6 @@ from bin.TF_ASIF.transcript import Transcript
 
 Entrez.email = "smadha@wpi.edu"
 
-
-
 class Gene:
     """
     Gene object
@@ -26,15 +24,32 @@ class Gene:
     def __init__(self, ensg_id: str, binding_site_file, idmapping_file,
                  biotype_filter=None, refmode="superisoform", domain_filter=None):
         """
+        Constructor
+
+        Downloads gene and transcript information, builds the transcripts'
+        domains, and (if requested) generates and aligns a superisoform
+        reference.
 
         Parameters
         ----------
-        ensg_id :
-        binding_site_file :
-        idmapping_file :
-        biotype_filter :
-        refmode :
-        domain_filter :
+        ensg_id : str
+            Ensembl Gene ID.
+        binding_site_file : str
+            Path to a tab-separated file of PPI binding sites, passed
+            through to each Transcript.
+        idmapping_file : str
+            Path to a tab-separated UniProt ID mapping file, passed
+            through to each Transcript.
+        biotype_filter : list, optional
+            Ensembl transcript biotypes to keep. Defaults to
+            ['protein_coding'].
+        refmode : str, optional
+            Reference mode used to align transcripts. "superisoform"
+            generates a combined-exon reference sequence; any other
+            value aligns to the first transcript instead.
+        domain_filter : list, optional
+            Domain types to include for each transcript. Defaults to
+            ["ppi_domain", "dbi"].
         """
         binding_site_df = pd.read_csv(binding_site_file, sep='\t', header=0)
         idmapping_df = pd.read_csv(idmapping_file, sep='\t', header=None)
@@ -65,14 +80,17 @@ class Gene:
 
     def download_gene_info(self, ensg_id=None):
         """
+        Download gene information from MyGene.info
 
         Parameters
         ----------
-        ensg_id :
+        ensg_id : str, optional
+            Ensembl Gene ID. Defaults to self.ensg_id.
 
         Returns
         -------
-
+        dict
+            Gene info result returned by mygene.MyGeneInfo.getgene.
         """
         if ensg_id is None:
             ensg_id = self.ensg_id
@@ -95,14 +113,20 @@ class Gene:
 
     def check_alternate_id(self, ensg_id = None):
         """
+        Identify the UniProt ID, RefSeq chromosome ID, and gene symbol
+        for this gene from its downloaded gene info.
 
         Parameters
         ----------
-        ensg_id :
+        ensg_id : str, optional
+            Ensembl Gene ID, used only for logging when an ID is
+            missing. Defaults to self.ensg_id.
 
         Returns
         -------
-
+        tuple
+            (uniprot_id, refseq_id_chrom, symbol), any of which may be
+            None if not found in gene_info.
         """
         if ensg_id is None:
             ensg_id = self.ensg_id
@@ -127,10 +151,14 @@ class Gene:
 
     def check_positions(self):
         """
+        Determine the genomic start, end, and strand of this gene from
+        gene_info, selecting the entry matching self.ensg_id when
+        genomic_pos contains multiple entries.
 
         Returns
         -------
-
+        tuple
+            (start_pos, end_pos, strand).
         """
         gene_info = self.gene_info
         if type(gene_info['genomic_pos']) is list:
@@ -153,18 +181,34 @@ class Gene:
     def download_transcripts(self, ensg_id=None, biotype_filter=None, domain_types=None, binding_site_df=None,
                              idmapping_df=None):
         """
+        Look up this gene's isoforms via the Ensembl REST API and build
+        a Transcript object for each isoform that passes biotype_filter
+        and has both a UniProt and RefSeq ID, filling in its RNA/protein
+        sequence and exon locations from the matching RefSeq CDS
+        feature (or by downloading the sequence if no match is found).
 
         Parameters
         ----------
-        ensg_id :
-        biotype_filter :
-        domain_types :
-        binding_site_df :
-        idmapping_df :
+        ensg_id : str, optional
+            Ensembl Gene ID. Defaults to self.ensg_id.
+        biotype_filter : list, optional
+            Ensembl transcript biotypes to keep. Defaults to
+            ['protein_coding'].
+        domain_types : list, optional
+            Domain types to pass through to each Transcript. Defaults
+            to ['ppi'].
+        binding_site_df : pd.DataFrame, optional
+            Data frame of PPI binding sites, passed through to each
+            Transcript.
+        idmapping_df : pd.DataFrame, optional
+            UniProt ID mapping data frame, passed through to each
+            Transcript.
 
         Returns
         -------
-
+        list[Transcript]
+            Transcripts for this gene, or an empty list if the gene or
+            its protein sequences could not be found on Ensembl.
         """
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
@@ -241,10 +285,15 @@ class Gene:
 
     def check_domain_redundancy(self, transcripts=None):
         """
+        Collapse redundant domains across transcripts by classification
+        (DNA-binding, PPI), then assign the surviving domains back to
+        each transcript as transcript.filtered_domains.
 
         Parameters
         ----------
-        transcripts :
+        transcripts : list[Transcript], optional
+            Transcripts to check for domain redundancy. Defaults to
+            self.transcripts.
         """
         if transcripts is None:
             transcripts = self.transcripts
@@ -281,10 +330,17 @@ class Gene:
 
     def generate_superisoform(self):
         """
+        Build a superisoform protein sequence by combining each unique
+        exon across all of this gene's transcripts, in genomic order,
+        and remap each transcript's filtered domains onto the
+        resulting superisoform coordinates.
 
         Returns
         -------
-
+        tuple
+            (superisoform, superdomains) where superisoform is the
+            combined-exon protein sequence (str) and superdomains is
+            the list[Domain] of domains mapped onto it.
         """
         superisoform_exon = ""
         superisoform_exons = []
