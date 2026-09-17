@@ -72,3 +72,6 @@ dependencies:
       - simplejson==3.20.2
       - sortedcontainers==2.4.0
       - urllib3==2.6.3
+
+  - seaborn
+  - matplotlib

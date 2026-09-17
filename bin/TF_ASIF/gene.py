@@ -1,241 +1,17 @@
 import random
-import sys
 
 import ensembl_rest
 import mygene
 import pandas as pd
-from Bio import Entrez, SeqIO, SeqFeature, Align
+from Bio import Entrez, SeqIO, SeqFeature
 from Bio.SeqFeature import SimpleLocation
+
+from bin.TF_ASIF.domain import Domain
+from bin.TF_ASIF.transcript import Transcript
 
 Entrez.email = "smadha@wpi.edu"
 
-class Domain:
-    """
-    Domain object
-    """
 
-    def __init__(self, interpro_id, start, end, source, pos=None, **kwargs):
-        """
-        Constructor
-
-        param interpro_id: interpro id
-        param start: start position
-        param end: end position
-        param source: source
-        param pos: position
-        """
-        self.interpro_id = interpro_id
-        self.start = start
-        self.end = end
-        self.source = source
-        self.types = self.determine_types()
-        if pos is None:
-            self.pos = SeqFeature.SeqFeature(SeqFeature.FeatureLocation(start, end))
-        else:
-            self.pos = pos
-
-    def determine_types(self):
-        """
-        Determine the types of this domain
-        """
-        types = []
-        if self.determine_dna_binding():
-            types.append("DNA-binding")
-        if self.determine_protein_interaction():
-            types.append("PPI")
-        return types
-
-    def determine_dna_binding(self, dna_binding_file="/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/interpro_superfamily_domains_DBD.tsv"):
-        """
-        Determine if this domain is a DNA-binding domain
-
-        param dna_binding_file: file containing DNA-binding domains
-        """
-        interpro_superfamily_domains_DBD = pd.read_csv(dna_binding_file, sep='\t', index_col=0)
-        if (self.interpro_id is None or self.source!="SuperFamily" or
-                self.interpro_id not in interpro_superfamily_domains_DBD.index):
-            return False
-        return interpro_superfamily_domains_DBD.loc[self.interpro_id,"DNA-binding"]
-
-    def determine_protein_interaction(self):
-        return False
-
-    def __repr__(self):
-        return "Interpro ID %s at %s of types %s" % (self.interpro_id, self.pos, self.types)
-
-
-class Transcript:
-    """
-    Transcript object
-    """
-    prot_seq = None
-    uniprot_id = None
-    domains = []
-    exons_rna = None
-    exons_prot = None
-
-    def __init__(self, gene, enst_id: str, ensp_id: str, domain_types: list):
-        """
-        Constructor
-
-        param gene: parent gene object
-        param enst_id: Ensembl Transcript ID
-        param ensp_id: Ensembl Protein ID
-        param domain_types: list of domain types to use
-        """
-        self.gene = gene
-        self.enst_id = enst_id
-        self.ensp_id = ensp_id
-        # print("Ensembl ID: " + self.enst_id)
-        self.uniprot_id = self.get_uniprot_id()
-        # print("UniProt ID: " + str(self.uniprot_id))
-        self.refseq_id = self.get_refseq_id()
-        if self.uniprot_id is None or self.refseq_id is None:
-            return
-        # print("RefSeq ID: " + str(self.refseq_id))
-        #self.prot_seq = self.download_sequence()
-        #print("Sequence: " + self.prot_seq)
-        self.domains = self.download_domains(domain_types=domain_types)
-        #print("Domains: " + str(self.domains))
-        #print(len(self.domains))
-
-    def download_sequence(self, ensp_id=None):
-        """
-        Download the protein sequence of this transcript
-
-        param ensp_id: Ensembl Protein ID
-        """
-        if ensp_id is None:
-            ensp_id = self.ensp_id
-        seq = ensembl_rest.sequence_id(ensp_id)["seq"]
-        return seq
-
-    def get_uniprot_id(self, ensp_id=None):
-        """
-        Identify the uniprot id of this transcript
-
-        param ensp_id: Ensembl Protein ID
-        """
-        if ensp_id is None:
-            ensp_id = self.ensp_id
-
-        uniprot_ids = idmapping_df.loc[(idmapping_df[2].str.contains(ensp_id)) &
-                                       (idmapping_df[1]=="Ensembl_PRO"), 0].tolist()
-        if len(uniprot_ids)>0:
-            return uniprot_ids[0]
-        else:
-            return None
-
-    def get_refseq_id(self, uniprot_id = None):
-        """
-        Identify the refseq id of this transcript
-
-        param uniprot_id: UniProt ID
-        """
-        if uniprot_id is None:
-            if self.uniprot_id is not None:
-                uniprot_id = self.uniprot_id
-            else:
-                return None
-        refseq_ids = idmapping_df.loc[(idmapping_df[0].str.contains(uniprot_id)) &
-                                      (idmapping_df[1]=="RefSeq") &
-                                      (idmapping_df[2].str.startswith("NP_")), 2].tolist()
-        if len(refseq_ids)>0:
-            return refseq_ids[0]
-        else:
-            return None
-
-    def download_domains(self, ensp_id=None, domain_types=None):
-        if domain_types is None:
-            domain_types = ["ppi_domain", "dbi"]
-        domains = []
-        if ensp_id is None:
-            ensp_id = self.ensp_id
-        if "ppi_domain" in domain_types or "dbi" in domain_types:
-            results = ensembl_rest.overlap_translation(ensp_id,
-                                                   type="domain")
-            domains += [Domain(interpro_id=res["interpro"], source = res["type"], **res)
-                        for res in results if res["type"] == "SuperFamily"]
-        if "ppi_bs" in domain_types:
-            domains += self.yue_ppi_locations()
-        return domains
-
-    def yue_ppi_locations(self):
-        if self.uniprot_id is None:
-            return
-        domains = []
-        uniprot_id = self.uniprot_id.split("-")[0]
-        for index_number in binding_site_df.index[binding_site_df["UniProt"] == uniprot_id]:
-            binding_site_id = binding_site_df.loc[index_number, "ID"]
-            binding_site_source = binding_site_df.loc[index_number, "Source"]
-            binding_site = binding_site_df.loc[index_number, "Binding_Site"]
-            locs = [SeqFeature.FeatureLocation(int(loc.split(", ")[0]), int(loc.split(", ")[-1]))
-                    for loc in binding_site[1:-1].split(", ")]
-            if len(locs) == 1:
-                domains.append(Domain(interpro_id=binding_site_id, source=binding_site_source, start=locs[0].start, end=locs[0].end, pos=locs[0]))
-            else:
-                domains.append(Domain(interpro_id=binding_site_id, source=binding_site_source, start=locs[0].start, end=locs[-1].end,
-                                      pos=SeqFeature.CompoundLocation(locs)))
-        for domain in domains:
-            domain.types=["PPI"]
-        return domains
-
-    def align_to_reference(self, refmode="superisoform", alignmode="global"):
-        aligner = Align.PairwiseAligner()
-        aligner.match_score = 10
-        aligner.mismatch_score = -15
-        aligner.open_insertion_score = -20
-        aligner.extend_insertion_score = -20
-        aligner.open_deletion_score = -25
-        aligner.extend_deletion_score = 0
-        aligner.mode = "global"
-        if refmode=="superisoform":
-            ref_seq = self.gene.superisoform_seq
-        else:
-            ref_seq = self.gene.transcripts[0].prot_seq
-        #print(ref_seq)
-        transcript_seq = self.prot_seq
-        #print(transcript_seq)
-        alignments = aligner.align(ref_seq, transcript_seq)
-        superdomains = self.gene.superdomains
-        #print([domain.pos for domain in superdomains])
-
-        isoform_coverage_percentages = {}
-        for i in range(len(alignments)):
-            for domain in superdomains:
-                domain_query = domain.pos.extract("".join([alignments[i].query[j] if j!=-1 else "-" for j in alignments[i].indices[1]]))
-                # print(domain_query)
-                # print(len(domain_query))
-                # print(alignments[i].counts())
-                overlap_perc = 1 - domain_query.count("-") / len(domain_query)
-                if domain.interpro_id not in isoform_coverage_percentages or \
-                        isoform_coverage_percentages[domain.interpro_id] < overlap_perc:
-                    # print(alignments[i])
-                    isoform_coverage_percentages[domain.interpro_id] = overlap_perc
-        print(self.gene.ensg_id)
-        print(self.enst_id)
-        print(len(isoform_coverage_percentages))
-        print(list(isoform_coverage_percentages.values()))
-
-    def __repr__(self):
-        return_string = "Transcript Ensembl ID: {}".format(self.enst_id)
-        return_string += "\n Part of Gene: {}".format(self.gene.ensg_id)
-        return_string += "\n Uniprot ID: {}".format(self.uniprot_id)
-        if self.refseq_id is not None:
-            return_string += "\n RefSeq ID: {}".format(self.refseq_id)
-            return_string += "\n RNA Exons at: {}".format(self.exons_rna)
-            return_string += "\n Protein Exons at: {}".format(self.exons_prot)
-        return return_string
-
-    def __str__(self):
-        return_string = "Transcript Ensembl ID: {}".format(self.enst_id)
-        return_string += "\n Part of Gene: {}".format(self.gene.ensg_id)
-        return_string += "\n Uniprot ID: {}".format(self.uniprot_id)
-        if self.refseq_id is not None:
-            return_string += "\n RefSeq ID: {}".format(self.refseq_id)
-            return_string += "\n RNA Exons at: {}".format(self.exons_rna)
-            return_string += "\n Protein Exons at: {}".format(self.exons_prot)
-        return return_string
 
 class Gene:
     """
@@ -250,13 +26,17 @@ class Gene:
     def __init__(self, ensg_id: str, binding_site_file, idmapping_file,
                  biotype_filter=None, refmode="superisoform", domain_filter=None):
         """
-        Initialize a Gene object based on Ensembl ID
 
-        param ensg_id: Ensembl Gene ID
+        Parameters
+        ----------
+        ensg_id :
+        binding_site_file :
+        idmapping_file :
+        biotype_filter :
+        refmode :
+        domain_filter :
         """
-        global binding_site_df
         binding_site_df = pd.read_csv(binding_site_file, sep='\t', header=0)
-        global idmapping_df
         idmapping_df = pd.read_csv(idmapping_file, sep='\t', header=None)
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
@@ -270,7 +50,8 @@ class Gene:
         self.start_pos, self.end_pos, self.strand = self.check_positions()
         # print("downloading transcripts")
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter=biotype_filter,
-                                                     domain_types =domain_filter)
+                                                     domain_types=domain_filter, binding_site_df=binding_site_df,
+                                                     idmapping_df=idmapping_df)
         # print("checking redundancy")
         self.check_domain_redundancy()
         # print("generating superisoform")
@@ -283,6 +64,16 @@ class Gene:
             transcript.align_to_reference(refmode=refmode)
 
     def download_gene_info(self, ensg_id=None):
+        """
+
+        Parameters
+        ----------
+        ensg_id :
+
+        Returns
+        -------
+
+        """
         if ensg_id is None:
             ensg_id = self.ensg_id
 
@@ -303,6 +94,16 @@ class Gene:
         return get_gene_result
 
     def check_alternate_id(self, ensg_id = None):
+        """
+
+        Parameters
+        ----------
+        ensg_id :
+
+        Returns
+        -------
+
+        """
         if ensg_id is None:
             ensg_id = self.ensg_id
         gene_info = self.gene_info
@@ -325,6 +126,12 @@ class Gene:
         return uniprot_id, refseq_id, symbol
 
     def check_positions(self):
+        """
+
+        Returns
+        -------
+
+        """
         gene_info = self.gene_info
         if type(gene_info['genomic_pos']) is list:
             i=0
@@ -343,7 +150,22 @@ class Gene:
             strand = gene_info['genomic_pos']['strand']
         return start_pos, end_pos, strand
 
-    def download_transcripts(self, ensg_id=None, biotype_filter=None, domain_types=None):
+    def download_transcripts(self, ensg_id=None, biotype_filter=None, domain_types=None, binding_site_df=None,
+                             idmapping_df=None):
+        """
+
+        Parameters
+        ----------
+        ensg_id :
+        biotype_filter :
+        domain_types :
+        binding_site_df :
+        idmapping_df :
+
+        Returns
+        -------
+
+        """
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
         if domain_types is None:
@@ -366,7 +188,7 @@ class Gene:
                 print(ensg_id + " no protein sequences found")
             else:
                 raise
-            return None
+            return []
 
         refseq_id_chrom, start_pos, end_pos, strand = self.refseq_id_chrom, self.start_pos, self.end_pos, self.strand
         handle = Entrez.efetch(db="nucleotide",
@@ -384,7 +206,8 @@ class Gene:
             if isoform['biotype'] not in biotype_filter:
                 continue
             # try:
-            transcript = Transcript(self, isoform['id'], isoform['Translation']['id'], domain_types)
+            transcript = Transcript(self, isoform['id'], isoform['Translation']['id'], domain_types=domain_types,
+                                    binding_site_df=binding_site_df, idmapping_df=idmapping_df)
             if transcript.refseq_id is not None and transcript.uniprot_id is not None:
                 prot_seq = None
                 for feature in features:
@@ -417,6 +240,12 @@ class Gene:
         return transcripts
 
     def check_domain_redundancy(self, transcripts=None):
+        """
+
+        Parameters
+        ----------
+        transcripts :
+        """
         if transcripts is None:
             transcripts = self.transcripts
         keeping_domains = []
@@ -451,7 +280,12 @@ class Gene:
                 [domain for domain in keeping_domains if domain.prot_id == transcript.refseq_id]
 
     def generate_superisoform(self):
+        """
 
+        Returns
+        -------
+
+        """
         superisoform_exon = ""
         superisoform_exons = []
         for transcript in self.transcripts:

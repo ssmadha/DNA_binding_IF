@@ -130,7 +130,7 @@ asif_transcript_df_common = (
     .rename(columns=common_columns)
 )
 
-maradoner_df_common = maradoner_df.loc[pd.IndexSlice[:, common_genes], common_columns.values()]
+maradoner_df_common = maradoner_df.loc[:, common_columns.values()]
 
 gene_name_to_id = (
     asif_df.index.to_frame(index=False)
@@ -429,7 +429,7 @@ rows = []
 
 for rep_motif, family_members in motif_families.items():
 
-    # Maradoner rows for this representative motif
+    # Get Maradoner values for this motif family
     mask_maradoner = (
         maradoner_df_common.index.get_level_values("MotifID") == rep_motif
     )
@@ -438,13 +438,11 @@ for rep_motif, family_members in motif_families.items():
         continue
 
     maradoner_subset = maradoner_df_common.loc[mask_maradoner]
-
-    # Mean Maradoner value across rows for each tissue
     maradoner_mean = maradoner_subset.mean(axis=0)
 
+    # Process every gene in this motif family
     for family_gene in family_members:
 
-        # ASIF gene-level data
         mask_asif = (
             asif_df_common.index.get_level_values("Gene Name")
             == family_gene
@@ -453,17 +451,11 @@ for rep_motif, family_members in motif_families.items():
         if not mask_asif.any():
             continue
 
-        asif_subset = asif_df_common.loc[mask_asif]
-
-        # If there are multiple ASIF rows for the gene, take the mean
-        asif_values = asif_subset.mean(axis=0)
-
-        # Gene ID
+        # Get Gene ID
         gene_id = gene_name_to_id.get(family_gene)
 
-        # Transcript-level ASIF
+        # Get all transcript-level ASIF values for this gene
         if gene_id is not None:
-
             mask_transcripts = (
                 asif_transcript_df_common.index
                 .get_level_values("Gene ID") == gene_id
@@ -472,41 +464,39 @@ for rep_motif, family_members in motif_families.items():
             transcript_subset = asif_transcript_df_common.loc[
                 mask_transcripts
             ]
-
         else:
             transcript_subset = pd.DataFrame()
 
         # One row for every tissue
         for tissue in common_columns.values():
 
-            asif_value = asif_values.get(tissue, np.nan)
             maradoner_value = maradoner_mean.get(tissue, np.nan)
 
-            # Find transcript with maximum ASIF for this tissue
-            if not transcript_subset.empty and tissue in transcript_subset.columns:
+            # Find transcript with maximum ASIF in this tissue
+            if (
+                not transcript_subset.empty
+                and tissue in transcript_subset.columns
+            ):
 
                 transcript_values = transcript_subset[tissue]
 
                 if transcript_values.notna().any():
 
                     max_transcript_idx = transcript_values.idxmax()
-                    max_asif = transcript_values.loc[max_transcript_idx]
+                    asif_max = transcript_values.loc[max_transcript_idx]
 
-                    # MultiIndex -> extract Transcript ID
+                    # Transcript ID is level 1 of the MultiIndex
                     if isinstance(max_transcript_idx, tuple):
                         transcript_id = max_transcript_idx[1]
                     else:
                         transcript_id = max_transcript_idx
-
-                    # Use transcript maximum rather than gene-level value
-                    asif_max = max_asif
 
                 else:
                     asif_max = np.nan
                     transcript_id = np.nan
 
             else:
-                asif_max = asif_value
+                asif_max = np.nan
                 transcript_id = np.nan
 
             rows.append({
@@ -515,8 +505,10 @@ for rep_motif, family_members in motif_families.items():
                 "Gene name": family_gene,
                 "Gene ID": gene_id,
                 "Tissue": tissue,
-                "Specific Isoform that has the Max ASIF": transcript_id
+                "Specific Isoform that has the Max ASIF": transcript_id,
+                "Motif Family": rep_motif
             })
+
 
 combined_df = pd.DataFrame(rows)
 
