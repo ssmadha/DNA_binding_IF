@@ -23,6 +23,12 @@ def get_args():
                             help="File with binding sites")
     getoptions.add_argument("-i", "--idmappingfile",
                             help="File with idmapping")
+    getoptions.add_argument("-c", "--cdsfastafile",
+                            help="Ensembl CDS FASTA file, used for local protein sequence lookup")
+    getoptions.add_argument("-u", "--uniprotmappingfile",
+                            help="Ensembl protein-to-UniProt xref TSV file, used for UniProt ID resolution")
+    getoptions.add_argument("-g", "--gtffile",
+                            help="Ensembl GTF annotation file, used to list this gene's isoforms")
 
     return getoptions.parse_args()
 
@@ -32,4 +38,5 @@ if __name__ == "__main__":
     print(args.ensgid)
     if args.ensgid.startswith("ENSG"):
         test_gene = gene.Gene(args.ensgid, binding_site_file=args.bindingsitefile, idmapping_file=args.idmappingfile,
-                              refmode=args.refmode, domain_filter=args.domains)
+                              cds_fasta_file=args.cdsfastafile, uniprot_mapping_file=args.uniprotmappingfile,
+                              gtf_file=args.gtffile, refmode=args.refmode, domain_filter=args.domains)

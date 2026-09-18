@@ -1,6 +1,9 @@
+import gzip
+import warnings
+
 import ensembl_rest
 import pandas as pd
-from Bio import SeqFeature, Align
+from Bio import SeqFeature, Align, SeqIO
 
 from bin.TF_ASIF.domain import Domain
 
@@ -15,9 +18,11 @@ class Transcript:
     exons_rna = None
     prot_seq = None
     exons_prot = None
+    _cds_sequences = None
+    _uniprot_mapping = None
 
     def __init__(self, gene, enst_id: str, ensp_id: str, domain_types: list, binding_site_df: pd.DataFrame,
-                 idmapping_df: pd.DataFrame):
+                 idmapping_df: pd.DataFrame, cds_fasta_file: str = None, uniprot_mapping_file: str = None):
         """
         Constructor
 
@@ -32,13 +37,23 @@ class Transcript:
             domain_types.
         idmapping_df: pd.DataFrame
             UniProt ID mapping data frame, used to resolve this
-            transcript's UniProt and RefSeq IDs.
+            transcript's RefSeq ID.
+        cds_fasta_file: str, optional
+            Path to a (optionally gzipped) Ensembl "cds.all.fa" FASTA
+            file, used by download_sequence for local protein sequence
+            lookup.
+        uniprot_mapping_file: str, optional
+            Path to a (optionally gzipped) Ensembl protein-to-UniProt
+            xref TSV file (e.g. "*.uniprot.tsv.gz"), used by
+            get_uniprot_id to resolve this transcript's UniProt ID.
         """
         self.gene = gene
         self.enst_id = enst_id
         self.ensp_id = ensp_id
+        self.cds_fasta_file = cds_fasta_file
+        self.uniprot_mapping_file = uniprot_mapping_file
         # print("Ensembl ID: " + self.enst_id)
-        self.uniprot_id = self.get_uniprot_id(idmapping_df=idmapping_df)
+        self.uniprot_id = self.get_uniprot_id()
         # print("UniProt ID: " + str(self.uniprot_id))
         self.refseq_id = self.get_refseq_id(idmapping_df=idmapping_df)
         if self.uniprot_id is None or self.refseq_id is None:
@@ -50,50 +65,124 @@ class Transcript:
         #print("Domains: " + str(self.domains))
         #print(len(self.domains))
 
-    def download_sequence(self, ensp_id=None):
+    def download_sequence(self, enst_id=None, cds_fasta_file=None):
         """
-        Download the protein sequence of this transcript
+        Look up the protein sequence of this transcript by translating
+        its CDS sequence from a local Ensembl CDS FASTA file, instead
+        of calling the Ensembl REST API.
 
         Parameters
         ----------
-        ensp_id: Ensembl Protein ID
-
-        Returns
-        -------
-        str
-            Protein sequence for ensp_id, from the Ensembl REST API.
-        """
-        if ensp_id is None:
-            ensp_id = self.ensp_id
-        seq = ensembl_rest.sequence_id(ensp_id)["seq"]
-        return seq
-
-    def get_uniprot_id(self, idmapping_df: pd.DataFrame, ensp_id=None):
-        """
-        Identify the uniprot id of this transcript
-
-        Parameters
-        ----------
-        idmapping_df: pd.DataFrame
-            UniProt ID mapping data frame to search for a row mapping
-            ensp_id to a UniProt ID.
-        ensp_id: Ensembl Protein ID
+        enst_id: Ensembl Transcript ID
+        cds_fasta_file: str, optional
+            Path to a (optionally gzipped) Ensembl "cds.all.fa" FASTA
+            file to look up enst_id's CDS sequence in. Defaults to
+            self.cds_fasta_file.
 
         Returns
         -------
         str or None
-            The first matching UniProt ID, or None if ensp_id is not
-            found in idmapping_df.
+            Protein sequence translated from enst_id's CDS sequence,
+            or None if the CDS is partial (its length is not a
+            multiple of 3) and was skipped.
+        """
+        if enst_id is None:
+            enst_id = self.enst_id
+        if cds_fasta_file is None:
+            cds_fasta_file = self.cds_fasta_file
+        cds_sequences = self._get_cds_sequences(cds_fasta_file)
+        cds_seq = cds_sequences[enst_id]
+        if len(cds_seq) % 3 != 0:
+            warnings.warn("Skipping " + enst_id + ": partial CDS (length "
+                          + str(len(cds_seq)) + " is not a multiple of 3)")
+            return None
+        return str(cds_seq.translate())
+
+    @classmethod
+    def _get_cds_sequences(cls, cds_fasta_file):
+        """
+        Load and cache CDS sequences from an Ensembl CDS FASTA file,
+        keyed by version-less Ensembl Transcript ID. The file is only
+        parsed once per process; subsequent calls reuse the cache.
+
+        Parameters
+        ----------
+        cds_fasta_file: str
+            Path to a (optionally gzipped) Ensembl "cds.all.fa" FASTA
+            file.
+
+        Returns
+        -------
+        dict[str, Bio.Seq.Seq]
+            CDS sequences keyed by version-less Ensembl Transcript ID.
+        """
+        if cls._cds_sequences is None:
+            opener = gzip.open if cds_fasta_file.endswith(".gz") else open
+            with opener(cds_fasta_file, "rt") as handle:
+                cls._cds_sequences = {record.id.split(".")[0]: record.seq
+                                      for record in SeqIO.parse(handle, "fasta")}
+        return cls._cds_sequences
+
+    def get_uniprot_id(self, ensp_id=None, uniprot_mapping_file=None):
+        """
+        Identify the uniprot id of this transcript by looking up its
+        Ensembl Protein ID in a local Ensembl protein-to-UniProt xref
+        TSV file.
+
+        Parameters
+        ----------
+        ensp_id: Ensembl Protein ID
+        uniprot_mapping_file: str, optional
+            Path to a (optionally gzipped) Ensembl protein-to-UniProt
+            xref TSV file (e.g. "*.uniprot.tsv.gz"). Defaults to
+            self.uniprot_mapping_file.
+
+        Returns
+        -------
+        str or None
+            The UniProt ID mapped to ensp_id, preferring the isoform-
+            specific accession (e.g. "P41235-5") when one is known,
+            then a reviewed SWISSPROT entry, then an unreviewed
+            SPTREMBL one. None if ensp_id has no UniProt mapping.
         """
         if ensp_id is None:
             ensp_id = self.ensp_id
+        if uniprot_mapping_file is None:
+            uniprot_mapping_file = self.uniprot_mapping_file
+        uniprot_mapping = self._get_uniprot_mapping(uniprot_mapping_file)
+        return uniprot_mapping.get(ensp_id)
 
-        uniprot_ids = idmapping_df.loc[(idmapping_df[2].str.contains(ensp_id)) &
-                                       (idmapping_df[1]=="Ensembl_PRO"), 0].tolist()
-        if len(uniprot_ids)>0:
-            return uniprot_ids[0]
-        else:
-            return None
+    @classmethod
+    def _get_uniprot_mapping(cls, uniprot_mapping_file):
+        """
+        Load and cache a mapping of Ensembl Protein ID to UniProt ID
+        from an Ensembl protein-to-UniProt xref TSV file, preferring
+        the isoform-specific ("Uniprot_isoform") accession for a given
+        protein over the reviewed SWISSPROT accession, which in turn
+        is preferred over the unreviewed SPTREMBL one. The file is
+        only parsed once per process; subsequent calls reuse the
+        cache.
+
+        Parameters
+        ----------
+        uniprot_mapping_file: str
+            Path to a (optionally gzipped) Ensembl protein-to-UniProt
+            xref TSV file (e.g. "*.uniprot.tsv.gz").
+
+        Returns
+        -------
+        dict[str, str]
+            UniProt IDs keyed by Ensembl Protein ID.
+        """
+        if cls._uniprot_mapping is None:
+            mapping_df = pd.read_csv(uniprot_mapping_file, sep='\t')
+            db_priority = {"Uniprot_isoform": 0, "Uniprot/SWISSPROT": 1, "Uniprot/SPTREMBL": 2}
+            mapping_df = mapping_df[mapping_df["db_name"].isin(db_priority)]
+            mapping_df = mapping_df.sort_values(
+                by="db_name", key=lambda col: col.map(db_priority))
+            mapping_df = mapping_df.drop_duplicates(subset="protein_stable_id", keep="first")
+            cls._uniprot_mapping = dict(zip(mapping_df["protein_stable_id"], mapping_df["xref"]))
+        return cls._uniprot_mapping
 
     def get_refseq_id(self, idmapping_df: pd.DataFrame, uniprot_id: str | None = None):
         """
