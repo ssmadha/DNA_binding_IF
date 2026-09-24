@@ -19,8 +19,8 @@ def get_args():
                             choices=["ppi_domain", "ppi_bs", "dbi"],
                             default=["ppi_domain", "dbi"],
                             help="Which domain types to use. Options are %(choices)s. (Default: %(default)s)")
-    getoptions.add_argument("-b", "--bindingsitefile",
-                            help="File with binding sites")
+    getoptions.add_argument("-b", "--ppibindingsitefile",
+                            help="File with PPI binding sites")
     getoptions.add_argument("-c", "--cdsfastafile",
                             help="Ensembl CDS FASTA file, used for local protein sequence lookup")
     getoptions.add_argument("-u", "--uniprotmappingfile",
@@ -42,7 +42,7 @@ if __name__ == "__main__":
     args = get_args()
     print(args.ensgid)
     if args.ensgid.startswith("ENSG"):
-        test_gene = gene.Gene(args.ensgid, binding_site_file=args.bindingsitefile,
+        test_gene = gene.Gene(args.ensgid, ppi_binding_site_file=args.ppibindingsitefile,
                               cds_fasta_file=args.cdsfastafile, uniprot_mapping_file=args.uniprotmappingfile,
                               gtf_file=args.gtffile, interpro_domains_file=args.interprodomainsfile,
                               refmode=args.refmode, domain_filter=args.domains,

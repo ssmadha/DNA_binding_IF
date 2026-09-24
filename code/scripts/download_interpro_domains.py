@@ -40,7 +40,7 @@ RAW_TSV_FILE = "interpro_domains_raw.tsv"
 
 def download_raw_tsv(raw_tsv_file=RAW_TSV_FILE):
     print("Querying BioMart for the whole human proteome's InterPro domains "
-          "(protein_stable_id, interpro_id, start, end); this can take several minutes...")
+          "(protein_id, domain_id, positions, source); this can take several minutes...")
     with requests.get(BIOMART_URL, params={"query": QUERY_XML}, stream=True, timeout=900) as response:
         response.raise_for_status()
         with open(raw_tsv_file, "wb") as handle:
@@ -50,12 +50,17 @@ def download_raw_tsv(raw_tsv_file=RAW_TSV_FILE):
 
 
 def clean_and_compress(raw_tsv_file=RAW_TSV_FILE, output_file=OUTPUT_FILE):
+    # Same column shape as reference_data/ppi_binding_sites.tsv
+    # (protein_id, domain_id, positions, source) so both files can be
+    # read by one shared parser. Each row here is always a single
+    # contiguous span, so "positions" is just "start-end" - never a
+    # multi-segment list like the PPI file's discontinuous contacts.
     seen = set()
     kept = 0
     total = 0
     with open(raw_tsv_file, newline="") as fin, gzip.open(output_file, "wt", newline="") as fout:
         writer = csv.writer(fout, delimiter="\t")
-        writer.writerow(["protein_stable_id", "interpro_id", "start", "end"])
+        writer.writerow(["protein_id", "domain_id", "positions", "source"])
         for row in csv.reader(fin, delimiter="\t"):
             total += 1
             if len(row) != 4 or not all(row):
@@ -64,7 +69,8 @@ def clean_and_compress(raw_tsv_file=RAW_TSV_FILE, output_file=OUTPUT_FILE):
             if key in seen:
                 continue
             seen.add(key)
-            writer.writerow(row)
+            protein_id, domain_id, start, end = row
+            writer.writerow([protein_id, domain_id, f"{start}-{end}", "SuperFamily"])
             kept += 1
     print(f"Wrote {kept} rows (from {total} raw rows) to {output_file}")
 

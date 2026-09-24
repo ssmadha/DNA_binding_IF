@@ -2,7 +2,6 @@ import gzip
 import random
 import re
 
-import pandas as pd
 from Bio import SeqFeature
 from Bio.SeqFeature import SimpleLocation
 
@@ -21,7 +20,7 @@ class Gene:
     _gtf_exon_coords = None
     _gtf_gene_info = None
 
-    def __init__(self, ensg_id: str, binding_site_file, cds_fasta_file, uniprot_mapping_file,
+    def __init__(self, ensg_id: str, ppi_binding_site_file, cds_fasta_file, uniprot_mapping_file,
                  gtf_file, interpro_domains_file=None, biotype_filter=None, refmode="superisoform",
                  domain_filter=None, merge_overlapping_domains=True):
         """
@@ -35,9 +34,11 @@ class Gene:
         ----------
         ensg_id : str
             Ensembl Gene ID.
-        binding_site_file : str
-            Path to a tab-separated file of PPI binding sites, passed
-            through to each Transcript.
+        ppi_binding_site_file : str
+            Path to a tab-separated file of PPI binding sites (same
+            protein_id/domain_id/positions/source schema as
+            interpro_domains_file, keyed by UniProt ID instead of
+            Ensembl Protein ID), passed through to each Transcript.
         cds_fasta_file : str
             Path to a (optionally gzipped) Ensembl "cds.all.fa" FASTA
             file, passed through to each Transcript for local protein
@@ -70,7 +71,6 @@ class Gene:
             overlapping group. If False, no overlap collapsing is
             done.
         """
-        binding_site_df = pd.read_csv(binding_site_file, sep='\t', header=0)
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
         if domain_filter is None:
@@ -86,7 +86,7 @@ class Gene:
         self.strand = gene_info["strand"]
         # print("downloading transcripts")
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter=biotype_filter,
-                                                     domain_types=domain_filter, binding_site_df=binding_site_df,
+                                                     domain_types=domain_filter, ppi_binding_site_file=ppi_binding_site_file,
                                                      cds_fasta_file=cds_fasta_file,
                                                      uniprot_mapping_file=uniprot_mapping_file, gtf_file=gtf_file,
                                                      interpro_domains_file=interpro_domains_file)
@@ -101,7 +101,7 @@ class Gene:
         for transcript in self.transcripts:
             transcript.align_to_reference(refmode=refmode)
 
-    def download_transcripts(self, ensg_id=None, biotype_filter=None, domain_types=None, binding_site_df=None,
+    def download_transcripts(self, ensg_id=None, biotype_filter=None, domain_types=None, ppi_binding_site_file=None,
                              cds_fasta_file=None, uniprot_mapping_file=None, gtf_file=None,
                              interpro_domains_file=None):
         """
@@ -124,9 +124,9 @@ class Gene:
         domain_types : list, optional
             Domain types to pass through to each Transcript. Defaults
             to ['ppi'].
-        binding_site_df : pd.DataFrame, optional
-            Data frame of PPI binding sites, passed through to each
-            Transcript.
+        ppi_binding_site_file : str, optional
+            Path to a tab-separated PPI binding site file, passed
+            through to each Transcript.
         cds_fasta_file : str, optional
             Path to a (optionally gzipped) Ensembl "cds.all.fa" FASTA
             file, passed through to each Transcript for local protein
@@ -168,7 +168,7 @@ class Gene:
             if isoform['biotype'] not in biotype_filter:
                 continue
             transcript = Transcript(self, isoform['id'], isoform['protein_id'], domain_types=domain_types,
-                                    binding_site_df=binding_site_df,
+                                    ppi_binding_site_file=ppi_binding_site_file,
                                     cds_fasta_file=cds_fasta_file, uniprot_mapping_file=uniprot_mapping_file,
                                     interpro_domains_file=interpro_domains_file)
             if transcript.uniprot_id is not None:
@@ -493,8 +493,7 @@ class Gene:
             for domain_start, domain_end, offset_before, offset_after in exon["domains"]:
                 remapped_start = offset_before + len(superisoform)
                 remapped_end = domain_end - domain_start + remapped_start
-                superdomains.append(Domain(interpro_id="SD" + str(random.randint(0, 9999)), source="Yue",
-                                           start=remapped_start, end=remapped_end,
-                                           pos=SeqFeature.FeatureLocation(remapped_start, remapped_end + 1)))
+                superdomains.append(Domain("SD" + str(random.randint(0, 9999)),
+                                           SeqFeature.FeatureLocation(remapped_start, remapped_end + 1), "Yue"))
             superisoform += exon["seq"]
         return superisoform, superdomains

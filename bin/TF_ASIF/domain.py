@@ -7,27 +7,60 @@ class Domain:
     Domain object
     """
 
-    def __init__(self, interpro_id, start, end, source, pos=None, **kwargs):
+    def __init__(self, interpro_id, positions, source):
         """
         Constructor
 
         Parameters
         ----------
         interpro_id: interpro id
-        start: start position
-        end: end position
+        positions: Bio.SeqFeature.Location
+            This domain's position(s) - a FeatureLocation for a single
+            contiguous span, or a CompoundLocation for a discontinuous
+            one (e.g. a PPI contact interface made of scattered
+            residues). start/end are derived from this.
         source: source
-        pos: position
         """
         self.interpro_id = interpro_id
-        self.start = start
-        self.end = end
+        self.pos = positions
+        self.start = positions.start
+        self.end = positions.end
         self.source = source
         self.types = self.determine_types()
-        if pos is None:
-            self.pos = SeqFeature.SeqFeature(SeqFeature.FeatureLocation(start, end))
-        else:
-            self.pos = pos
+
+    @classmethod
+    def from_positions_string(cls, interpro_id, positions_str, source):
+        """
+        Build a Domain from a run-length-encoded positions string, as
+        stored in the shared reference_data/ domain TSV schema
+        (protein_id, domain_id, positions, source) used by both
+        Homo_sapiens.GRCh38.interpro_domains.tsv.gz and
+        ppi_binding_sites.tsv.
+
+        Parameters
+        ----------
+        interpro_id: interpro id (or, for a PPI binding site, its
+            synthetic domain_id).
+        positions_str: str
+            Comma-separated list of "start-end" segments or lone
+            positions, e.g. "104-352" (one contiguous span) or
+            "23-37,39-43,61,94,96,99-110" (a discontinuous site).
+        source: source
+
+        Returns
+        -------
+        Domain
+        """
+        locations = []
+        for segment in positions_str.split(","):
+            if "-" in segment:
+                start, end = segment.split("-")
+                locations.append(SeqFeature.FeatureLocation(int(start), int(end)))
+            else:
+                pos = int(segment)
+                locations.append(SeqFeature.FeatureLocation(pos, pos))
+        positions = locations[0] if len(locations) == 1 else SeqFeature.CompoundLocation(locations)
+        return cls(interpro_id, positions, source)
 
     def determine_types(self):
         """

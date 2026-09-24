@@ -2,7 +2,7 @@ import gzip
 import warnings
 
 import pandas as pd
-from Bio import SeqFeature, Align, SeqIO
+from Bio import Align, SeqIO
 
 from bin.TF_ASIF.domain import Domain
 
@@ -20,9 +20,11 @@ class Transcript:
     _cds_sequences = None
     _uniprot_mapping = None
     _interpro_domains = None
+    _ppi_binding_sites = None
 
-    def __init__(self, gene, enst_id: str, ensp_id: str, domain_types: list, binding_site_df: pd.DataFrame,
-                 cds_fasta_file: str = None, uniprot_mapping_file: str = None, interpro_domains_file: str = None):
+    def __init__(self, gene, enst_id: str, ensp_id: str, domain_types: list,
+                 cds_fasta_file: str = None, uniprot_mapping_file: str = None,
+                 interpro_domains_file: str = None, ppi_binding_site_file: str = None):
         """
         Constructor
 
@@ -32,9 +34,6 @@ class Transcript:
         enst_id: Ensembl Transcript ID
         ensp_id: Ensembl Protein ID
         domain_types: list of domain types to use
-        binding_site_df: pd.DataFrame
-            Data frame of PPI binding sites, used when "ppi_bs" is in
-            domain_types.
         cds_fasta_file: str, optional
             Path to a (optionally gzipped) Ensembl "cds.all.fa" FASTA
             file, used by download_sequence for local protein sequence
@@ -45,9 +44,15 @@ class Transcript:
             get_uniprot_id to resolve this transcript's UniProt ID.
         interpro_domains_file: str, optional
             Path to a (optionally gzipped) local InterPro protein
-            domain TSV file (protein_stable_id, interpro_id, start,
-            end), used by download_domains to resolve this
+            domain TSV file (protein_id, domain_id, positions,
+            source), used by download_domains to resolve this
             transcript's SuperFamily/InterPro domains.
+        ppi_binding_site_file: str, optional
+            Path to a tab-separated PPI binding site file (same
+            protein_id/domain_id/positions/source schema as
+            interpro_domains_file, keyed by UniProt ID instead of
+            Ensembl Protein ID), used by yue_ppi_locations when
+            "ppi_bs" is in domain_types.
         """
         self.gene = gene
         self.enst_id = enst_id
@@ -55,6 +60,7 @@ class Transcript:
         self.cds_fasta_file = cds_fasta_file
         self.uniprot_mapping_file = uniprot_mapping_file
         self.interpro_domains_file = interpro_domains_file
+        self.ppi_binding_site_file = ppi_binding_site_file
         # print("Ensembl ID: " + self.enst_id)
         self.uniprot_id = self.get_uniprot_id()
         # print("UniProt ID: " + str(self.uniprot_id))
@@ -186,12 +192,40 @@ class Transcript:
         return cls._uniprot_mapping
 
     @classmethod
+    def _load_domain_reference_file(cls, file_path):
+        """
+        Load a shared-schema domain reference TSV file (columns:
+        protein_id, domain_id, positions, source - see
+        Domain.from_positions_string for the "positions" format),
+        keyed by protein_id. Used for both
+        Homo_sapiens.GRCh38.interpro_domains.tsv.gz (keyed by Ensembl
+        Protein ID) and ppi_binding_sites.tsv (keyed by UniProt ID).
+
+        Parameters
+        ----------
+        file_path: str
+            Path to a (optionally gzipped) domain reference TSV file.
+
+        Returns
+        -------
+        dict[str, list[tuple[str, str, str]]]
+            For each protein_id, a list of (domain_id, positions,
+            source) tuples.
+        """
+        domains_df = pd.read_csv(file_path, sep='\t')
+        domains = {}
+        for protein_id, domain_id, positions, source in zip(
+                domains_df["protein_id"], domains_df["domain_id"],
+                domains_df["positions"], domains_df["source"]):
+            domains.setdefault(protein_id, []).append((domain_id, positions, source))
+        return domains
+
+    @classmethod
     def _get_interpro_domains(cls, interpro_domains_file):
         """
         Load and cache a mapping of Ensembl Protein ID to its InterPro
         protein domains from a local InterPro protein domain TSV file
-        (columns: protein_stable_id, interpro_id, start, end; an
-        Ensembl BioMart "Protein Domains and Families" InterPro
+        (an Ensembl BioMart "Protein Domains and Families" InterPro
         export). The file is only parsed once per process; subsequent
         calls reuse the cache.
 
@@ -203,22 +237,37 @@ class Transcript:
 
         Returns
         -------
-        dict[str, list[tuple[str, int, int]]]
-            For each Ensembl Protein ID, a list of (interpro_id,
-            start, end) tuples.
+        dict[str, list[tuple[str, str, str]]]
+            See _load_domain_reference_file.
         """
         if cls._interpro_domains is None:
-            domains_df = pd.read_csv(interpro_domains_file, sep='\t')
-            interpro_domains = {}
-            for protein_stable_id, interpro_id, start, end in zip(
-                    domains_df["protein_stable_id"], domains_df["interpro_id"],
-                    domains_df["start"], domains_df["end"]):
-                interpro_domains.setdefault(protein_stable_id, []).append((interpro_id, int(start), int(end)))
-            cls._interpro_domains = interpro_domains
+            cls._interpro_domains = cls._load_domain_reference_file(interpro_domains_file)
         return cls._interpro_domains
 
-    def download_domains(self, ensp_id=None, domain_types=None, binding_site_df: pd.DataFrame | None = None,
-                         interpro_domains_file=None):
+    @classmethod
+    def _get_ppi_binding_sites(cls, ppi_binding_site_file):
+        """
+        Load and cache a mapping of UniProt ID to PPI binding site
+        domains from a local PPI binding site TSV file. The file is
+        only parsed once per process; subsequent calls reuse the
+        cache.
+
+        Parameters
+        ----------
+        ppi_binding_site_file: str
+            Path to a tab-separated PPI binding site file.
+
+        Returns
+        -------
+        dict[str, list[tuple[str, str, str]]]
+            See _load_domain_reference_file.
+        """
+        if cls._ppi_binding_sites is None:
+            cls._ppi_binding_sites = cls._load_domain_reference_file(ppi_binding_site_file)
+        return cls._ppi_binding_sites
+
+    def download_domains(self, ensp_id=None, domain_types=None,
+                         interpro_domains_file=None, ppi_binding_site_file=None):
         """
         Look up this transcript's domains in a local InterPro protein
         domain file and/or the PPI binding site data, depending on
@@ -233,12 +282,13 @@ class Transcript:
             SuperFamily/InterPro domains in a local InterPro protein
             domain file; "ppi_bs" fetches PPI binding sites via
             yue_ppi_locations. Defaults to ["ppi_domain", "dbi"].
-        binding_site_df : pd.DataFrame, optional
-            Data frame of PPI binding sites, required when "ppi_bs"
-            is in domain_types.
         interpro_domains_file : str, optional
             Path to a (optionally gzipped) local InterPro protein
             domain TSV file. Defaults to self.interpro_domains_file.
+        ppi_binding_site_file : str, optional
+            Path to a tab-separated PPI binding site file, required
+            when "ppi_bs" is in domain_types. Defaults to
+            self.ppi_binding_site_file.
 
         Returns
         -------
@@ -252,25 +302,28 @@ class Transcript:
             ensp_id = self.ensp_id
         if interpro_domains_file is None:
             interpro_domains_file = self.interpro_domains_file
+        if ppi_binding_site_file is None:
+            ppi_binding_site_file = self.ppi_binding_site_file
         if "ppi_domain" in domain_types or "dbi" in domain_types:
             interpro_domains = self._get_interpro_domains(interpro_domains_file)
-            domains += [Domain(interpro_id=interpro_id, source="SuperFamily", start=start, end=end)
-                        for interpro_id, start, end in interpro_domains.get(ensp_id, [])]
+            domains += [Domain.from_positions_string(domain_id, positions, source)
+                        for domain_id, positions, source in interpro_domains.get(ensp_id, [])]
         if "ppi_bs" in domain_types:
-            if binding_site_df is None :
-                raise "Need binding site df if using PPI binding site"
-            else:
-                domains += self.yue_ppi_locations(binding_site_df=binding_site_df)
+            if ppi_binding_site_file is None:
+                raise ValueError("Need ppi_binding_site_file if using PPI binding site")
+            domains += self.yue_ppi_locations(ppi_binding_site_file=ppi_binding_site_file)
         return domains
 
-    def yue_ppi_locations(self, binding_site_df: pd.DataFrame) -> list[Domain]:
+    def yue_ppi_locations(self, ppi_binding_site_file=None) -> list[Domain]:
         """
         Identify PPI locations
 
         Parameters
         ----------
-        binding_site_df : pd.DataFrame
-            Data frame containing binding sites
+        ppi_binding_site_file : str, optional
+            Path to a tab-separated PPI binding site file. Defaults to
+            self.ppi_binding_site_file.
+
         Returns
         -------
         list[Domain]
@@ -278,21 +331,14 @@ class Transcript:
         """
         if self.uniprot_id is None:
             return []
-        domains = []
+        if ppi_binding_site_file is None:
+            ppi_binding_site_file = self.ppi_binding_site_file
         uniprot_id = self.uniprot_id.split("-")[0]
-        for index_number in binding_site_df.index[binding_site_df["UniProt"] == uniprot_id]:
-            binding_site_id = binding_site_df.loc[index_number, "ID"]
-            binding_site_source = binding_site_df.loc[index_number, "Source"]
-            binding_site = binding_site_df.loc[index_number, "Binding_Site"]
-            locs = [SeqFeature.FeatureLocation(int(loc.split(", ")[0]), int(loc.split(", ")[-1]))
-                    for loc in binding_site[1:-1].split(", ")]
-            if len(locs) == 1:
-                domains.append(Domain(interpro_id=binding_site_id, source=binding_site_source, start=locs[0].start, end=locs[0].end, pos=locs[0]))
-            else:
-                domains.append(Domain(interpro_id=binding_site_id, source=binding_site_source, start=locs[0].start, end=locs[-1].end,
-                                      pos=SeqFeature.CompoundLocation(locs)))
+        ppi_binding_sites = self._get_ppi_binding_sites(ppi_binding_site_file)
+        domains = [Domain.from_positions_string(domain_id, positions, source)
+                   for domain_id, positions, source in ppi_binding_sites.get(uniprot_id, [])]
         for domain in domains:
-            domain.types=["PPI"]
+            domain.types = ["PPI"]
         return domains
 
     def align_to_reference(self, refmode="superisoform", alignmode="global"):
