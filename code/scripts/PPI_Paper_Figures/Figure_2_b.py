@@ -7,7 +7,7 @@ from matplotlib.patches import Ellipse
 # Load and prepare data
 # ============================================================
 
-df = pd.read_csv("ppi_binding_sites.tsv", sep="\t")
+df = pd.read_csv("reference_data/ppi_binding_sites.tsv", sep="\t")
 
 bc = df[df["Source"] == "bc"].copy()
 w = df[df["Source"] == "w"].copy()

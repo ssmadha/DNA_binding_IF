@@ -47,7 +47,7 @@ class Domain:
             types.append("PPI")
         return types
 
-    def determine_dna_binding(self, dna_binding_file="/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/interpro_superfamily_domains_DBD.tsv"):
+    def determine_dna_binding(self, dna_binding_file="/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/reference_data/interpro_superfamily_domains_DBD.tsv"):
         """
         Determine if this domain is a DNA-binding domain
 

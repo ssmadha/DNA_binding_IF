@@ -113,11 +113,11 @@ class TestCheckDomainRedundancy(unittest.TestCase):
 class TestGene(unittest.TestCase):
     def test_Gene_creation(self):
         test_ensg_id = "ENSG00000101076"
-        binding_site_file = "/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/ppi_binding_sites.tsv"
-        cds_fasta_file = "/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/Homo_sapiens.GRCh38.cds.all.fa.gz"
-        uniprot_mapping_file = "/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/Homo_sapiens.GRCh38.109.uniprot.tsv.gz"
-        gtf_file = "/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/Homo_sapiens.GRCh38.109.gtf.gz"
-        interpro_domains_file = "/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/Homo_sapiens.GRCh38.interpro_domains.tsv.gz"
+        binding_site_file = "/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/reference_data/ppi_binding_sites.tsv"
+        cds_fasta_file = "/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/reference_data/Homo_sapiens.GRCh38.cds.all.fa.gz"
+        uniprot_mapping_file = "/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/reference_data/Homo_sapiens.GRCh38.109.uniprot.tsv.gz"
+        gtf_file = "/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/reference_data/Homo_sapiens.GRCh38.109.gtf.gz"
+        interpro_domains_file = "/mnt/data/storage/WPI/Korkin_Lab/DNA_Binding_IF/reference_data/Homo_sapiens.GRCh38.interpro_domains.tsv.gz"
         test_gene = gene.Gene(test_ensg_id, binding_site_file, cds_fasta_file, uniprot_mapping_file,
                               gtf_file, interpro_domains_file)
         self.assertEqual(test_ensg_id, test_gene.ensg_id)  # add assertion here

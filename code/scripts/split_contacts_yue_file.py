@@ -9,4 +9,4 @@ contacts_a_df.columns = contacts_b_df.columns = ["ID", "UniProt", "Binding_Site"
 contacts_df = pd.concat([contacts_a_df, contacts_b_df], ignore_index=True).drop_duplicates()
 contacts_df["ID"] = contacts_df["ID"] + "_" + contacts_df["UniProt"]
 
-contacts_df.to_csv("../../ppi_binding_sites.tsv", sep='\t', index=False)
+contacts_df.to_csv("../../reference_data/ppi_binding_sites.tsv", sep='\t', index=False)
