@@ -2,7 +2,6 @@ import gzip
 import random
 import re
 
-import mygene
 import pandas as pd
 from Bio import SeqFeature
 from Bio.SeqFeature import SimpleLocation
@@ -15,16 +14,16 @@ class Gene:
     Gene object
     """
     seq = None
-    uniprot_id = None
-    refseq_id_chrom = None
     transcripts = []
     superisoform_seq = None
     _gtf_index = None
     _gtf_cds_blocks = None
     _gtf_exon_coords = None
+    _gtf_gene_info = None
 
-    def __init__(self, ensg_id: str, binding_site_file, idmapping_file, cds_fasta_file, uniprot_mapping_file,
-                 gtf_file, biotype_filter=None, refmode="superisoform", domain_filter=None):
+    def __init__(self, ensg_id: str, binding_site_file, cds_fasta_file, uniprot_mapping_file,
+                 gtf_file, interpro_domains_file=None, biotype_filter=None, refmode="superisoform",
+                 domain_filter=None, merge_overlapping_domains=True):
         """
         Constructor
 
@@ -39,9 +38,6 @@ class Gene:
         binding_site_file : str
             Path to a tab-separated file of PPI binding sites, passed
             through to each Transcript.
-        idmapping_file : str
-            Path to a tab-separated UniProt ID mapping file, passed
-            through to each Transcript for RefSeq ID resolution.
         cds_fasta_file : str
             Path to a (optionally gzipped) Ensembl "cds.all.fa" FASTA
             file, passed through to each Transcript for local protein
@@ -53,6 +49,10 @@ class Gene:
         gtf_file : str
             Path to a (optionally gzipped) Ensembl GTF annotation
             file, used to list this gene's isoforms.
+        interpro_domains_file : str, optional
+            Path to a (optionally gzipped) local InterPro protein
+            domain TSV file, passed through to each Transcript for
+            SuperFamily/InterPro domain lookup.
         biotype_filter : list, optional
             Ensembl transcript biotypes to keep. Defaults to
             ['protein_coding'].
@@ -63,26 +63,35 @@ class Gene:
         domain_filter : list, optional
             Domain types to include for each transcript. Defaults to
             ["ppi_domain", "dbi"].
+        merge_overlapping_domains : bool, optional
+            Passed through to check_domain_redundancy. If True
+            (default), collapse mutually overlapping domains (across
+            all transcripts) down to the largest domain in each
+            overlapping group. If False, no overlap collapsing is
+            done.
         """
         binding_site_df = pd.read_csv(binding_site_file, sep='\t', header=0)
-        idmapping_df = pd.read_csv(idmapping_file, sep='\t', header=None)
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
         if domain_filter is None:
             domain_filter = ["ppi_domain", "dbi"]
         self.ensg_id = ensg_id
-        self.gene_info = self.download_gene_info()
-        self.uniprot_id, self.refseq_id_chrom, self.symbol = self.check_alternate_id()
-        if self.refseq_id_chrom is None:
+        gene_info = self._get_gtf_gene_info(gtf_file).get(ensg_id)
+        if gene_info is None:
+            print(ensg_id + " not found in " + gtf_file)
             return
-        self.start_pos, self.end_pos, self.strand = self.check_positions()
+        self.symbol = gene_info["symbol"]
+        self.start_pos = gene_info["start"]
+        self.end_pos = gene_info["end"]
+        self.strand = gene_info["strand"]
         # print("downloading transcripts")
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter=biotype_filter,
                                                      domain_types=domain_filter, binding_site_df=binding_site_df,
-                                                     idmapping_df=idmapping_df, cds_fasta_file=cds_fasta_file,
-                                                     uniprot_mapping_file=uniprot_mapping_file, gtf_file=gtf_file)
+                                                     cds_fasta_file=cds_fasta_file,
+                                                     uniprot_mapping_file=uniprot_mapping_file, gtf_file=gtf_file,
+                                                     interpro_domains_file=interpro_domains_file)
         # print("checking redundancy")
-        self.check_domain_redundancy()
+        self.check_domain_redundancy(merge_overlapping=merge_overlapping_domains)
         # print("generating superisoform")
         if refmode == "superisoform":
             self.superisoform_seq, self.superdomains = self.generate_superisoform(gtf_file=gtf_file)
@@ -92,113 +101,14 @@ class Gene:
         for transcript in self.transcripts:
             transcript.align_to_reference(refmode=refmode)
 
-    def download_gene_info(self, ensg_id=None):
-        """
-        Download gene information from MyGene.info
-
-        Parameters
-        ----------
-        ensg_id : str, optional
-            Ensembl Gene ID. Defaults to self.ensg_id.
-
-        Returns
-        -------
-        dict
-            Gene info result returned by mygene.MyGeneInfo.getgene.
-        """
-        if ensg_id is None:
-            ensg_id = self.ensg_id
-
-        # server = biomart.BiomartServer('http://useast.ensembl.org/biomart')
-        # mart = server.datasets['hsapiens_gene_ensembl']
-        #
-        # attributes = ['ensembl_gene_id', 'ensembl_transcript_id', 'ensembl_peptide_id',
-        #               'refseq_mrna', 'refseq_peptide']
-        # response = mart.search({'attributes': attributes,
-        #                         'filters': {'ensembl_gene_id': ensg_id}
-        #                         })
-        # data = response.raw.data.decode('ascii')
-        #
-        # id_df = pd.read_csv(StringIO(data), sep='\t')
-
-        mg = mygene.MyGeneInfo()
-        get_gene_result = mg.getgene(ensg_id)
-        return get_gene_result
-
-    def check_alternate_id(self, ensg_id = None):
-        """
-        Identify the UniProt ID, RefSeq chromosome ID, and gene symbol
-        for this gene from its downloaded gene info.
-
-        Parameters
-        ----------
-        ensg_id : str, optional
-            Ensembl Gene ID, used only for logging when an ID is
-            missing. Defaults to self.ensg_id.
-
-        Returns
-        -------
-        tuple
-            (uniprot_id, refseq_id_chrom, symbol), any of which may be
-            None if not found in gene_info.
-        """
-        if ensg_id is None:
-            ensg_id = self.ensg_id
-        gene_info = self.gene_info
-        uniprot_id = None
-        refseq_id = None
-        symbol = None
-        if gene_info is not None:
-            if "uniprot" in gene_info:
-                uniprot_id = gene_info["uniprot"]
-            if "refseq" in gene_info:
-                refseq_id = gene_info["refseq"]["genomic"][0]
-            if "symbol" in gene_info:
-                symbol = gene_info["symbol"]
-        if uniprot_id is None:
-            print("No UniProt ID found for " + ensg_id)
-        if refseq_id is None:
-            print("No RefSeq ID found for " + ensg_id)
-        if symbol is None:
-            print("No gene symbol found for " + ensg_id)
-        return uniprot_id, refseq_id, symbol
-
-    def check_positions(self):
-        """
-        Determine the genomic start, end, and strand of this gene from
-        gene_info, selecting the entry matching self.ensg_id when
-        genomic_pos contains multiple entries.
-
-        Returns
-        -------
-        tuple
-            (start_pos, end_pos, strand).
-        """
-        gene_info = self.gene_info
-        if type(gene_info['genomic_pos']) is list:
-            i=0
-            while i < len(gene_info['genomic_pos']):
-                if gene_info['genomic_pos'][i]['ensemblgene']==self.ensg_id:
-                    break
-                i+=1
-            if i==len(gene_info['genomic_pos']):
-                i=0
-            start_pos = gene_info['genomic_pos'][i]['start']
-            end_pos = gene_info['genomic_pos'][i]['end']
-            strand = gene_info['genomic_pos'][i]['strand']
-        else:
-            start_pos = gene_info['genomic_pos']['start']
-            end_pos = gene_info['genomic_pos']['end']
-            strand = gene_info['genomic_pos']['strand']
-        return start_pos, end_pos, strand
-
     def download_transcripts(self, ensg_id=None, biotype_filter=None, domain_types=None, binding_site_df=None,
-                             idmapping_df=None, cds_fasta_file=None, uniprot_mapping_file=None, gtf_file=None):
+                             cds_fasta_file=None, uniprot_mapping_file=None, gtf_file=None,
+                             interpro_domains_file=None):
         """
         Look up this gene's isoforms in a local Ensembl GTF annotation
         file and build a Transcript object for each isoform that
-        passes biotype_filter and has both a UniProt and RefSeq ID,
-        filling in its RNA/protein sequence and exon locations from
+        passes biotype_filter and has a UniProt ID, filling in its
+        RNA/protein sequence and exon locations from
         that same GTF file's CDS block structure and a local Ensembl
         CDS FASTA file. Isoforms whose protein sequence or CDS block
         structure cannot be determined (e.g. a partial CDS) are
@@ -217,9 +127,6 @@ class Gene:
         binding_site_df : pd.DataFrame, optional
             Data frame of PPI binding sites, passed through to each
             Transcript.
-        idmapping_df : pd.DataFrame, optional
-            UniProt ID mapping data frame, passed through to each
-            Transcript for RefSeq ID resolution.
         cds_fasta_file : str, optional
             Path to a (optionally gzipped) Ensembl "cds.all.fa" FASTA
             file, passed through to each Transcript for local protein
@@ -231,6 +138,10 @@ class Gene:
         gtf_file : str, optional
             Path to a (optionally gzipped) Ensembl GTF annotation
             file, used to list this gene's isoforms.
+        interpro_domains_file : str, optional
+            Path to a (optionally gzipped) local InterPro protein
+            domain TSV file, passed through to each Transcript for
+            SuperFamily/InterPro domain lookup.
 
         Returns
         -------
@@ -257,9 +168,10 @@ class Gene:
             if isoform['biotype'] not in biotype_filter:
                 continue
             transcript = Transcript(self, isoform['id'], isoform['protein_id'], domain_types=domain_types,
-                                    binding_site_df=binding_site_df, idmapping_df=idmapping_df,
-                                    cds_fasta_file=cds_fasta_file, uniprot_mapping_file=uniprot_mapping_file)
-            if transcript.refseq_id is not None and transcript.uniprot_id is not None:
+                                    binding_site_df=binding_site_df,
+                                    cds_fasta_file=cds_fasta_file, uniprot_mapping_file=uniprot_mapping_file,
+                                    interpro_domains_file=interpro_domains_file)
+            if transcript.uniprot_id is not None:
                 exon_lengths = gtf_cds_blocks.get(transcript.enst_id)
                 prot_seq = transcript.download_sequence()
                 if exon_lengths is None or prot_seq is None:
@@ -311,6 +223,7 @@ class Gene:
             transcript_info = {}
             transcript_protein_ids = {}
             cds_blocks = {}
+            gene_info = {}
             opener = gzip.open if gtf_file.endswith(".gz") else open
             with opener(gtf_file, "rt") as handle:
                 for line in handle:
@@ -329,6 +242,14 @@ class Gene:
                             transcript_protein_ids.setdefault(transcript_id, attributes.get("protein_id"))
                         cds_blocks.setdefault(transcript_id, []).append(
                             (int(fields[3]), int(fields[4]), fields[6], fields[7]))
+                    elif feature == "gene":
+                        attributes = dict(attribute_re.findall(fields[8]))
+                        gene_info[attributes["gene_id"]] = {
+                            "symbol": attributes.get("gene_name"),
+                            "start": int(fields[3]),
+                            "end": int(fields[4]),
+                            "strand": 1 if fields[6] == "+" else -1,
+                        }
             gtf_index = {}
             for transcript_id, (gene_id, biotype) in transcript_info.items():
                 gtf_index.setdefault(gene_id, []).append({
@@ -358,6 +279,7 @@ class Gene:
             cls._gtf_index = gtf_index
             cls._gtf_cds_blocks = gtf_cds_blocks
             cls._gtf_exon_coords = gtf_exon_coords
+            cls._gtf_gene_info = gene_info
         return cls._gtf_index
 
     @classmethod
@@ -415,7 +337,32 @@ class Gene:
         cls._get_gtf_index(gtf_file)
         return cls._gtf_exon_coords
 
-    def check_domain_redundancy(self, transcripts=None):
+    @classmethod
+    def _get_gtf_gene_info(cls, gtf_file):
+        """
+        Load and cache, from an Ensembl GTF annotation file, each
+        gene's symbol and genomic start/end/strand from its "gene"
+        feature line. The file is only parsed once per process
+        (shared with _get_gtf_index); subsequent calls reuse the
+        cache.
+
+        Parameters
+        ----------
+        gtf_file: str
+            Path to a (optionally gzipped) Ensembl GTF annotation
+            file.
+
+        Returns
+        -------
+        dict[str, dict]
+            For each Ensembl Gene ID, a {"symbol": <gene name, or
+            None>, "start": <int>, "end": <int>, "strand": <1 or
+            -1>} dict.
+        """
+        cls._get_gtf_index(gtf_file)
+        return cls._gtf_gene_info
+
+    def check_domain_redundancy(self, transcripts=None, merge_overlapping=True):
         """
         Collapse redundant domains across transcripts by classification
         (DNA-binding, PPI), then assign the surviving domains back to
@@ -426,6 +373,12 @@ class Gene:
         transcripts : list[Transcript], optional
             Transcripts to check for domain redundancy. Defaults to
             self.transcripts.
+        merge_overlapping : bool, optional
+            If True (default), within each classification, collapse
+            mutually overlapping domains (across all transcripts) down
+            to the largest domain in each overlapping group. If False,
+            every classified domain from every transcript is kept
+            as-is, with no overlap collapsing.
         """
         if transcripts is None:
             transcripts = self.transcripts
@@ -433,32 +386,34 @@ class Gene:
         for classification in ["DNA-binding", "PPI"]:
             domain_queue = []
             for transcript in transcripts:
-                if transcript.refseq_id is None:
+                if transcript.uniprot_id is None:
                     continue
-                domain_queue += [domain for domain in transcript.domains
-                                 if classification in domain.types]# and domain.source in ['SuperFamily', 'Yue']]
+                for domain in transcript.domains:
+                    if classification in domain.types:
+                        domain.prot_id = transcript.ensp_id
+                        domain_queue.append(domain)
             # print("domain_queue:")
             # print(domain_queue)
             while len(domain_queue) > 0:
                 currDomain = domain_queue.pop()
-                # removeList = []
-                # for i, domain in enumerate(domain_queue):
-                #     if (currDomain.start <= domain.start <= currDomain.end) or \
-                #             (currDomain.start <= domain.end <= currDomain.end) or \
-                #             (currDomain.start >= domain.start and
-                #              currDomain.end <= domain.end):
-                #         if currDomain.end - currDomain.start < domain.end - domain.start:
-                #             currDomain = domain
-                #         removeList.append(i)
-                # for i in removeList[-1::-1]:
-                #     del domain_queue[i]
-                currDomain.prot_id = transcript.refseq_id
+                if merge_overlapping:
+                    removeList = []
+                    for i, domain in enumerate(domain_queue):
+                        if (currDomain.start <= domain.start <= currDomain.end) or \
+                                (currDomain.start <= domain.end <= currDomain.end) or \
+                                (currDomain.start >= domain.start and
+                                 currDomain.end <= domain.end):
+                            if currDomain.end - currDomain.start < domain.end - domain.start:
+                                currDomain = domain
+                            removeList.append(i)
+                    for i in removeList[-1::-1]:
+                        del domain_queue[i]
                 keeping_domains.append(currDomain)
         # print("keeping_domains:")
         # print(keeping_domains)
         for transcript in self.transcripts:
             transcript.filtered_domains = \
-                [domain for domain in keeping_domains if domain.prot_id == transcript.refseq_id]
+                [domain for domain in keeping_domains if domain.prot_id == transcript.ensp_id]
 
     def generate_superisoform(self, gtf_file=None):
         """
@@ -488,7 +443,7 @@ class Gene:
 
         unique_exons = {}
         for transcript in self.transcripts:
-            if transcript.refseq_id is None or transcript.prot_seq is None:
+            if transcript.uniprot_id is None or transcript.prot_seq is None:
                 continue
             coords = exon_coords.get(transcript.enst_id)
             if coords is None:

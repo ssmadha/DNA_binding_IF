@@ -20,7 +20,7 @@ process DOWNLOAD_GENE {
 
     script:
     """
-    download_gene.py -e ${gene_name} -b ${params.binding_site_file} -i ${params.idmapping_file} -c ${params.cds_fasta_file} -u ${params.uniprot_mapping_file} -g ${params.gtf_file}> ${gene_name}.txt
+    download_gene.py -e ${gene_name} -b ${params.binding_site_file} -c ${params.cds_fasta_file} -u ${params.uniprot_mapping_file} -g ${params.gtf_file} -p ${params.interpro_domains_file}> ${gene_name}.txt
     """
 }
 

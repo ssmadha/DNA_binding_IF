@@ -1,7 +1,6 @@
 import gzip
 import warnings
 
-import ensembl_rest
 import pandas as pd
 from Bio import SeqFeature, Align, SeqIO
 
@@ -20,9 +19,10 @@ class Transcript:
     exons_prot = None
     _cds_sequences = None
     _uniprot_mapping = None
+    _interpro_domains = None
 
     def __init__(self, gene, enst_id: str, ensp_id: str, domain_types: list, binding_site_df: pd.DataFrame,
-                 idmapping_df: pd.DataFrame, cds_fasta_file: str = None, uniprot_mapping_file: str = None):
+                 cds_fasta_file: str = None, uniprot_mapping_file: str = None, interpro_domains_file: str = None):
         """
         Constructor
 
@@ -35,9 +35,6 @@ class Transcript:
         binding_site_df: pd.DataFrame
             Data frame of PPI binding sites, used when "ppi_bs" is in
             domain_types.
-        idmapping_df: pd.DataFrame
-            UniProt ID mapping data frame, used to resolve this
-            transcript's RefSeq ID.
         cds_fasta_file: str, optional
             Path to a (optionally gzipped) Ensembl "cds.all.fa" FASTA
             file, used by download_sequence for local protein sequence
@@ -46,19 +43,23 @@ class Transcript:
             Path to a (optionally gzipped) Ensembl protein-to-UniProt
             xref TSV file (e.g. "*.uniprot.tsv.gz"), used by
             get_uniprot_id to resolve this transcript's UniProt ID.
+        interpro_domains_file: str, optional
+            Path to a (optionally gzipped) local InterPro protein
+            domain TSV file (protein_stable_id, interpro_id, start,
+            end), used by download_domains to resolve this
+            transcript's SuperFamily/InterPro domains.
         """
         self.gene = gene
         self.enst_id = enst_id
         self.ensp_id = ensp_id
         self.cds_fasta_file = cds_fasta_file
         self.uniprot_mapping_file = uniprot_mapping_file
+        self.interpro_domains_file = interpro_domains_file
         # print("Ensembl ID: " + self.enst_id)
         self.uniprot_id = self.get_uniprot_id()
         # print("UniProt ID: " + str(self.uniprot_id))
-        self.refseq_id = self.get_refseq_id(idmapping_df=idmapping_df)
-        if self.uniprot_id is None or self.refseq_id is None:
+        if self.uniprot_id is None:
             return
-        # print("RefSeq ID: " + str(self.refseq_id))
         #self.prot_seq = self.download_sequence()
         #print("Sequence: " + self.prot_seq)
         self.domains = self.download_domains(domain_types=domain_types)
@@ -184,54 +185,60 @@ class Transcript:
             cls._uniprot_mapping = dict(zip(mapping_df["protein_stable_id"], mapping_df["xref"]))
         return cls._uniprot_mapping
 
-    def get_refseq_id(self, idmapping_df: pd.DataFrame, uniprot_id: str | None = None):
+    @classmethod
+    def _get_interpro_domains(cls, interpro_domains_file):
         """
-        Identify the refseq id of this transcript
+        Load and cache a mapping of Ensembl Protein ID to its InterPro
+        protein domains from a local InterPro protein domain TSV file
+        (columns: protein_stable_id, interpro_id, start, end; an
+        Ensembl BioMart "Protein Domains and Families" InterPro
+        export). The file is only parsed once per process; subsequent
+        calls reuse the cache.
 
         Parameters
         ----------
-        idmapping_df: pd.DataFrame
-            UniProt ID mapping data frame to search for a row mapping
-            uniprot_id to a RefSeq protein ID.
-        uniprot_id: UniProt ID
+        interpro_domains_file: str
+            Path to a (optionally gzipped) local InterPro protein
+            domain TSV file.
 
         Returns
         -------
-        str or None
-            The first matching RefSeq protein ID (starting with "NP_"),
-            or None if uniprot_id is not found in idmapping_df or is
-            unavailable.
+        dict[str, list[tuple[str, int, int]]]
+            For each Ensembl Protein ID, a list of (interpro_id,
+            start, end) tuples.
         """
-        if uniprot_id is None:
-            if self.uniprot_id is not None:
-                uniprot_id: str = self.uniprot_id
-            else:
-                return None
-        refseq_ids = idmapping_df.loc[(idmapping_df[0].str.contains(uniprot_id)) &
-                                      (idmapping_df[1]=="RefSeq") &
-                                      (idmapping_df[2].str.startswith("NP_")), 2].tolist()
-        if len(refseq_ids)>0:
-            return refseq_ids[0]
-        else:
-            return None
+        if cls._interpro_domains is None:
+            domains_df = pd.read_csv(interpro_domains_file, sep='\t')
+            interpro_domains = {}
+            for protein_stable_id, interpro_id, start, end in zip(
+                    domains_df["protein_stable_id"], domains_df["interpro_id"],
+                    domains_df["start"], domains_df["end"]):
+                interpro_domains.setdefault(protein_stable_id, []).append((interpro_id, int(start), int(end)))
+            cls._interpro_domains = interpro_domains
+        return cls._interpro_domains
 
-    def download_domains(self, ensp_id=None, domain_types=None, binding_site_df: pd.DataFrame | None = None):
+    def download_domains(self, ensp_id=None, domain_types=None, binding_site_df: pd.DataFrame | None = None,
+                         interpro_domains_file=None):
         """
-        Download this transcript's domains from Ensembl and/or the
-        PPI binding site data, depending on domain_types.
+        Look up this transcript's domains in a local InterPro protein
+        domain file and/or the PPI binding site data, depending on
+        domain_types.
 
         Parameters
         ----------
         ensp_id : str, optional
             Ensembl Protein ID. Defaults to self.ensp_id.
         domain_types : list, optional
-            Domain types to include. "ppi_domain" or "dbi" fetch
-            SuperFamily domains from the Ensembl REST API; "ppi_bs"
-            fetches PPI binding sites via yue_ppi_locations. Defaults
-            to ["ppi_domain", "dbi"].
+            Domain types to include. "ppi_domain" or "dbi" look up
+            SuperFamily/InterPro domains in a local InterPro protein
+            domain file; "ppi_bs" fetches PPI binding sites via
+            yue_ppi_locations. Defaults to ["ppi_domain", "dbi"].
         binding_site_df : pd.DataFrame, optional
             Data frame of PPI binding sites, required when "ppi_bs"
             is in domain_types.
+        interpro_domains_file : str, optional
+            Path to a (optionally gzipped) local InterPro protein
+            domain TSV file. Defaults to self.interpro_domains_file.
 
         Returns
         -------
@@ -243,11 +250,12 @@ class Transcript:
         domains = []
         if ensp_id is None:
             ensp_id = self.ensp_id
+        if interpro_domains_file is None:
+            interpro_domains_file = self.interpro_domains_file
         if "ppi_domain" in domain_types or "dbi" in domain_types:
-            results = ensembl_rest.overlap_translation(ensp_id,
-                                                   type="domain")
-            domains += [Domain(interpro_id=res["interpro"], source = res["type"], **res)
-                        for res in results if res["type"] == "SuperFamily"]
+            interpro_domains = self._get_interpro_domains(interpro_domains_file)
+            domains += [Domain(interpro_id=interpro_id, source="SuperFamily", start=start, end=end)
+                        for interpro_id, start, end in interpro_domains.get(ensp_id, [])]
         if "ppi_bs" in domain_types:
             if binding_site_df is None :
                 raise "Need binding site df if using PPI binding site"
@@ -347,14 +355,12 @@ class Transcript:
         -------
         str
             Multi-line string with this transcript's Ensembl ID,
-            parent gene, UniProt ID, and (if resolved) RefSeq ID and
-            exon locations.
+            parent gene, UniProt ID, and (if resolved) exon locations.
         """
         return_string = "Transcript Ensembl ID: {}".format(self.enst_id)
         return_string += "\n Part of Gene: {}".format(self.gene.ensg_id)
         return_string += "\n Uniprot ID: {}".format(self.uniprot_id)
-        if self.refseq_id is not None:
-            return_string += "\n RefSeq ID: {}".format(self.refseq_id)
+        if self.uniprot_id is not None:
             return_string += "\n RNA Exons at: {}".format(self.exons_rna)
             return_string += "\n Protein Exons at: {}".format(self.exons_prot)
         return return_string
@@ -367,14 +373,12 @@ class Transcript:
         -------
         str
             Multi-line string with this transcript's Ensembl ID,
-            parent gene, UniProt ID, and (if resolved) RefSeq ID and
-            exon locations.
+            parent gene, UniProt ID, and (if resolved) exon locations.
         """
         return_string = "Transcript Ensembl ID: {}".format(self.enst_id)
         return_string += "\n Part of Gene: {}".format(self.gene.ensg_id)
         return_string += "\n Uniprot ID: {}".format(self.uniprot_id)
-        if self.refseq_id is not None:
-            return_string += "\n RefSeq ID: {}".format(self.refseq_id)
+        if self.uniprot_id is not None:
             return_string += "\n RNA Exons at: {}".format(self.exons_rna)
             return_string += "\n Protein Exons at: {}".format(self.exons_prot)
         return return_string
