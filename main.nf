@@ -4,9 +4,18 @@ nextflow.enable.dsl=2
 
 // Domain types passed to download_gene.py -d (space-separated; any of
 // ppi_domain, ppi_bs, dbi). e.g. --domains ppi_bs for PPI binding sites only.
+// Where results are published; set per run (e.g. --outdir results_ppi)
+// to avoid overwriting earlier runs.
+params.outdir = "results"
 params.domains = "ppi_domain dbi"
 // true passes --keepoverlappingdomains (skip collapsing overlapping domains).
 params.keep_overlapping_domains = true
+// Comma-separated transcript expression TSV(s) (gene_id, transcript_id,
+// <tissue>_TPM, ...); one ASIF table is written per file. Unset skips ASIF.
+params.expression_files = null
+// ASIF impact factor = 1 - mean(sigmoid(alpha * (coverage - beta))).
+params.asif_alpha = 63
+params.asif_beta = 0.3
 
 process DOWNLOAD_GTF {
 
@@ -72,10 +81,12 @@ process DOWNLOAD_INTERPRO_DOMAINS {
 process DOWNLOAD_GENE {
 
     time { 15.m * task.attempt }
-    errorStrategy 'retry'
+    // Retry twice, then skip the gene rather than aborting the whole run;
+    // skipped genes end up in <outdir>/failed_genes.txt.
+    errorStrategy { task.attempt <= 2 ? 'retry' : 'ignore' }
     maxRetries 2
 
-    publishDir "results/individual", mode: 'copy'
+    publishDir "${params.outdir}/individual", mode: 'copy'
 
     conda "${projectDir}/environment.yaml"
 
@@ -101,25 +112,46 @@ process DOWNLOAD_GENE {
     """
 }
 
-process COMBINE_GENES {
+process MERGE_RESULTS {
 
-    publishDir "results", mode: 'copy'
+    publishDir params.outdir, mode: 'copy'
 
     input:
-    path gene_files
+    path gene_files, stageAs: "individual/*"
 
     output:
-    path "all_genes_combined.txt"
+    path "all_results.tsv"
+
+    // Reads the staged directory rather than taking the files as
+    // arguments, so tens of thousands of genes don't hit ARG_MAX.
+    script:
+    """
+    merge_gene_results.py --input-dir individual --output all_results.tsv
+    """
+}
+
+process COMPUTE_ASIF {
+
+    publishDir params.outdir, mode: 'copy'
+
+    conda "${projectDir}/environment.yaml"
+
+    input:
+    path all_results
+    path expression_file
+
+    output:
+    path "${expression_file.baseName}_ASIF.tsv"
 
     script:
     """
-    cat ${gene_files} > all_genes_combined.txt
+    compute_asif.py --results ${all_results} --expression ${expression_file} --alpha ${params.asif_alpha} --beta ${params.asif_beta} --output ${expression_file.baseName}_ASIF.tsv
     """
 }
 
 process LOG_FAILURES {
 
-    publishDir "results", mode: 'copy'
+    publishDir params.outdir, mode: 'copy'
 
     input:
     val failed_list
@@ -128,9 +160,14 @@ process LOG_FAILURES {
     path "failed_genes.txt"
 
     script:
-    """
-    printf "%s\n" ${failed_list.join(' ')} > failed_genes.txt
-    """
+    if (failed_list)
+        """
+        printf "%s\n" ${failed_list.join(' ')} > failed_genes.txt
+        """
+    else
+        """
+        touch failed_genes.txt
+        """
 }
 
 workflow {
@@ -148,18 +185,20 @@ workflow {
 
     gene_outputs = DOWNLOAD_GENE(genes, gtf_file, cds_fasta_file, uniprot_mapping_file, interpro_domains_file)
 
-    // Successful gene names
-    successful_genes = gene_outputs.map { it[0] }
-
-    // Collect lists
-    all_genes_list = genes.collect()
-    successful_list = successful_genes.collect()
-
-    // Compute failures
+    // Genes with no output after all retries. ifEmpty([]) keeps these
+    // steps running even if every gene fails; wrapping each list in [ ]
+    // stops combine() from flattening the two lists into one.
+    all_genes_list = genes.collect().map { [it] }
+    successful_list = gene_outputs.map { it[0] }.collect().ifEmpty([]).map { [it] }
     failed_genes = all_genes_list
         .combine(successful_list)
         .map { all, success -> all - success }
 
-    COMBINE_GENES(gene_outputs.map{ it[1] }.collect())
+    all_results = MERGE_RESULTS(gene_outputs.map{ it[1] }.collect().ifEmpty([]))
+
+    if (params.expression_files) {
+        expression_files = Channel.fromPath(params.expression_files.tokenize(','), checkIfExists: true)
+        COMPUTE_ASIF(all_results, expression_files)
+    }
     LOG_FAILURES(failed_genes)
 }
