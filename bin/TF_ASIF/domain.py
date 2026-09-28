@@ -1,5 +1,14 @@
+import os
+
 import pandas as pd
 from Bio import SeqFeature
+
+# Resolved relative to this file (bin/TF_ASIF/domain.py -> repo root), so the
+# default works regardless of the caller's working directory (repo root for
+# tests, a work/xx/<hash>/ task directory under Nextflow).
+DEFAULT_DNA_BINDING_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..",
+    "reference_data", "interpro_superfamily_domains_DBD.tsv")
 
 
 class Domain:
@@ -7,13 +16,15 @@ class Domain:
     Domain object
     """
 
-    def __init__(self, interpro_id, positions, source):
+    def __init__(self, domain_id, positions, source):
         """
         Constructor
 
         Parameters
         ----------
-        interpro_id: interpro id
+        domain_id: domain identifier - an InterPro accession for
+            InterPro-sourced domains, or the synthetic domain_id of a
+            PPI binding site.
         positions: Bio.SeqFeature.Location
             This domain's position(s) - a FeatureLocation for a single
             contiguous span, or a CompoundLocation for a discontinuous
@@ -21,7 +32,7 @@ class Domain:
             residues). start/end are derived from this.
         source: source
         """
-        self.interpro_id = interpro_id
+        self.domain_id = domain_id
         self.pos = positions
         self.start = positions.start
         self.end = positions.end
@@ -29,7 +40,7 @@ class Domain:
         self.types = self.determine_types()
 
     @classmethod
-    def from_positions_string(cls, interpro_id, positions_str, source):
+    def from_positions_string(cls, domain_id, positions_str, source):
         """
         Build a Domain from a run-length-encoded positions string, as
         stored in the shared reference_data/ domain TSV schema
@@ -39,8 +50,8 @@ class Domain:
 
         Parameters
         ----------
-        interpro_id: interpro id (or, for a PPI binding site, its
-            synthetic domain_id).
+        domain_id: domain identifier - an InterPro accession, or for a
+            PPI binding site, its synthetic domain_id.
         positions_str: str
             Comma-separated list of "start-end" segments or lone
             positions, e.g. "104-352" (one contiguous span) or
@@ -60,7 +71,7 @@ class Domain:
                 pos = int(segment)
                 locations.append(SeqFeature.FeatureLocation(pos, pos))
         positions = locations[0] if len(locations) == 1 else SeqFeature.CompoundLocation(locations)
-        return cls(interpro_id, positions, source)
+        return cls(domain_id, positions, source)
 
     def determine_types(self):
         """
@@ -80,7 +91,7 @@ class Domain:
             types.append("PPI")
         return types
 
-    def determine_dna_binding(self, dna_binding_file="../../../reference_data/interpro_superfamily_domains_DBD.tsv"):
+    def determine_dna_binding(self, dna_binding_file=DEFAULT_DNA_BINDING_FILE):
         """
         Determine if this domain is a DNA-binding domain
 
@@ -92,16 +103,16 @@ class Domain:
         Returns
         -------
         bool
-            True if this domain's interpro_id is listed as DNA-binding
-            in dna_binding_file. False if the domain has no interpro_id,
+            True if this domain's domain_id is listed as DNA-binding
+            in dna_binding_file. False if the domain has no domain_id,
             is not sourced from SuperFamily, or is not found in the
             file.
         """
         interpro_superfamily_domains_DBD = pd.read_csv(dna_binding_file, sep='\t', index_col=0)
-        if (self.interpro_id is None or self.source!="SuperFamily" or
-                self.interpro_id not in interpro_superfamily_domains_DBD.index):
+        if (self.domain_id is None or self.source!="SuperFamily" or
+                self.domain_id not in interpro_superfamily_domains_DBD.index):
             return False
-        return interpro_superfamily_domains_DBD.loc[self.interpro_id,"DNA-binding"]
+        return interpro_superfamily_domains_DBD.loc[self.domain_id,"DNA-binding"]
 
     def determine_protein_interaction(self):
         """
@@ -122,8 +133,8 @@ class Domain:
         Returns
         -------
         str
-            String with this domain's interpro_id, position, and
+            String with this domain's domain_id, position, and
             types.
         """
-        return "Interpro ID %s at %s of types %s" % (self.interpro_id, self.pos, self.types)
+        return "Domain ID %s at %s of types %s" % (self.domain_id, self.pos, self.types)
 

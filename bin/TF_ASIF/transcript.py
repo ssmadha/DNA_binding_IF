@@ -4,7 +4,7 @@ import warnings
 import pandas as pd
 from Bio import Align, SeqIO
 
-from TF_ASIF.domain import Domain
+from .domain import Domain
 
 
 class Transcript:
@@ -384,10 +384,10 @@ class Transcript:
                 # print(len(domain_query))
                 # print(alignments[i].counts())
                 overlap_perc = 1 - domain_query.count("-") / len(domain_query)
-                if domain.interpro_id not in isoform_coverage_percentages or \
-                        isoform_coverage_percentages[domain.interpro_id] < overlap_perc:
+                if domain.domain_id not in isoform_coverage_percentages or \
+                        isoform_coverage_percentages[domain.domain_id] < overlap_perc:
                     # print(alignments[i])
-                    isoform_coverage_percentages[domain.interpro_id] = overlap_perc
+                    isoform_coverage_percentages[domain.domain_id] = overlap_perc
         print(self.gene.ensg_id)
         print(self.enst_id)
         print(len(isoform_coverage_percentages))

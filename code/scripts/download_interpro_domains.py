@@ -19,13 +19,16 @@ import csv
 
 import requests
 
-BIOMART_URL = "https://www.ensembl.org/biomart/martservice"
+# Pinned to the Ensembl release 109 archive (Feb 2023), matching the
+# release of the GTF/CDS/UniProt-xref files the pipeline also uses. The
+# live www.ensembl.org mart tracks the current release instead.
+BIOMART_URL = "https://feb2023.archive.ensembl.org/biomart/martservice"
 DATASET = "hsapiens_gene_ensembl"
 OUTPUT_FILE = "../../reference_data/Homo_sapiens.GRCh38.interpro_domains.tsv.gz"
 
 QUERY_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE Query>
-<Query virtualSchemaName="default" formatter="TSV" header="0" uniqueRows="0" count="" datasetConfigVersion="0.6">
+<Query virtualSchemaName="default" formatter="TSV" header="0" uniqueRows="0" count="" datasetConfigVersion="0.6" completionStamp="1">
   <Dataset name="{DATASET}" interface="default">
     <Attribute name="ensembl_peptide_id"/>
     <Attribute name="interpro"/>
@@ -38,14 +41,23 @@ QUERY_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
 RAW_TSV_FILE = "interpro_domains_raw.tsv"
 
 
-def download_raw_tsv(raw_tsv_file=RAW_TSV_FILE):
-    print("Querying BioMart for the whole human proteome's InterPro domains "
+def download_raw_tsv(raw_tsv_file=RAW_TSV_FILE, biomart_url=BIOMART_URL):
+    print("Querying BioMart at " + biomart_url + " for the whole human proteome's InterPro domains "
           "(protein_id, domain_id, positions, source); this can take several minutes...")
-    with requests.get(BIOMART_URL, params={"query": QUERY_XML}, stream=True, timeout=900) as response:
+    with requests.get(biomart_url, params={"query": QUERY_XML}, stream=True, timeout=900) as response:
         response.raise_for_status()
         with open(raw_tsv_file, "wb") as handle:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 handle.write(chunk)
+    # completionStamp="1" makes BioMart append a final "[success]" line;
+    # without it, a server-side abort mid-export looks like a short but
+    # otherwise valid HTTP 200 response.
+    with open(raw_tsv_file, "rb") as handle:
+        handle.seek(0, 2)
+        handle.seek(max(0, handle.tell() - 64))
+        tail = handle.read().decode(errors="replace").strip().splitlines()
+    if not tail or tail[-1] != "[success]":
+        raise RuntimeError("BioMart response is incomplete (no [success] stamp): " + raw_tsv_file)
     print("Download complete: " + raw_tsv_file)
 
 
@@ -62,6 +74,8 @@ def clean_and_compress(raw_tsv_file=RAW_TSV_FILE, output_file=OUTPUT_FILE):
         writer = csv.writer(fout, delimiter="\t")
         writer.writerow(["protein_id", "domain_id", "positions", "source"])
         for row in csv.reader(fin, delimiter="\t"):
+            if row == ["[success]"]:
+                continue
             total += 1
             if len(row) != 4 or not all(row):
                 continue
@@ -83,10 +97,12 @@ def get_args():
     parser.add_argument("-r", "--raw-tsv-file", default=RAW_TSV_FILE,
                         help="Path to write the raw (pre-cleaning) BioMart TSV response to. \
                               Default: %(default)s")
+    parser.add_argument("-u", "--biomart-url", default=BIOMART_URL,
+                        help="BioMart martservice endpoint to query. Default: %(default)s")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = get_args()
-    download_raw_tsv(raw_tsv_file=args.raw_tsv_file)
+    download_raw_tsv(raw_tsv_file=args.raw_tsv_file, biomart_url=args.biomart_url)
     clean_and_compress(raw_tsv_file=args.raw_tsv_file, output_file=args.output)

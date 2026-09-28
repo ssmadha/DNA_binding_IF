@@ -5,8 +5,8 @@ import re
 from Bio import SeqFeature
 from Bio.SeqFeature import SimpleLocation
 
-from TF_ASIF.domain import Domain
-from TF_ASIF.transcript import Transcript
+from .domain import Domain
+from .transcript import Transcript
 
 class Gene:
     """

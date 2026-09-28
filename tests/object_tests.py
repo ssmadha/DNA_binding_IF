@@ -10,7 +10,7 @@ def _make_domain(types, start=0, end=10):
     """Build a Domain double with pre-set types, bypassing the real
     interpro_superfamily_domains_DBD.tsv-based classification lookup."""
     domain = Domain.__new__(Domain)
-    domain.interpro_id = "IPR000000"
+    domain.domain_id = "IPR000000"
     domain.start = start
     domain.end = end
     domain.source = "SuperFamily"

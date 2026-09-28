@@ -2,6 +2,12 @@
 
 nextflow.enable.dsl=2
 
+// Domain types passed to download_gene.py -d (space-separated; any of
+// ppi_domain, ppi_bs, dbi). e.g. --domains ppi_bs for PPI binding sites only.
+params.domains = "ppi_domain dbi"
+// true passes --keepoverlappingdomains (skip collapsing overlapping domains).
+params.keep_overlapping_domains = true
+
 process DOWNLOAD_GTF {
 
     storeDir "${projectDir}/reference_data"
@@ -52,7 +58,7 @@ process DOWNLOAD_INTERPRO_DOMAINS {
 
     storeDir "${projectDir}/reference_data"
 
-    conda "environment.yaml"
+    conda "${projectDir}/environment.yaml"
 
     output:
     path "Homo_sapiens.GRCh38.interpro_domains.tsv.gz"
@@ -71,7 +77,7 @@ process DOWNLOAD_GENE {
 
     publishDir "results/individual", mode: 'copy'
 
-    conda "environment.yaml"
+    conda "${projectDir}/environment.yaml"
 
     input:
     val gene_name
@@ -91,7 +97,7 @@ process DOWNLOAD_GENE {
 
     script:
     """
-    download_gene.py --keepoverlappingdomains -d ppi_bs -e ${gene_name} -b ${params.ppi_binding_site_file} -c ${params.cds_fasta_file} -u ${params.uniprot_mapping_file} -g ${params.gtf_file} -p ${params.interpro_domains_file}> ${gene_name}.txt
+    download_gene.py ${params.keep_overlapping_domains ? '--keepoverlappingdomains' : ''} -d ${params.domains} -e ${gene_name} -b ${params.ppi_binding_site_file} -c ${params.cds_fasta_file} -u ${params.uniprot_mapping_file} -g ${params.gtf_file} -p ${params.interpro_domains_file}> ${gene_name}.txt
     """
 }
 

@@ -21,3 +21,6 @@
 /reference_data/Homo_sapiens.GRCh38.cds.all.fa.gz
 /reference_data/Homo_sapiens.GRCh38.109.uniprot.tsv.gz
 /reference_data/Homo_sapiens.GRCh38.interpro_domains.tsv.gz
+
+# Python bytecode caches
+__pycache__/
