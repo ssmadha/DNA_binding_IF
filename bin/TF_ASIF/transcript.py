@@ -4,7 +4,7 @@ import warnings
 import pandas as pd
 from Bio import Align, SeqIO
 
-from bin.TF_ASIF.domain import Domain
+from TF_ASIF.domain import Domain
 
 
 class Transcript:
