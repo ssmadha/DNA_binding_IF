@@ -14,8 +14,11 @@ and for each tissue/sample column:
 
 Inputs
 ------
-results: TSV with gene_id, transcript_id, n_domains, domain_coverage
-    (domain_coverage as a "[a, b, ...]" list).
+results: merged results TSV from merge_gene_results.py, either
+    - one row per transcript and domain with a "coverage" column (current
+      download_gene.py output), or
+    - one row per transcript with n_domains and a "[a, b, ...]"
+      domain_coverage list (older runs).
 expression: TSV with gene_id, transcript_id, then one column per
     tissue/sample named "<tissue><suffix>" (suffix "_TPM" by default).
     Columns not ending in the suffix are ignored.
@@ -75,6 +78,31 @@ def impact_factor(coverages, alpha, beta):
     return 1 - np.mean(1 / (1 + np.exp(-alpha * (coverages - beta))))
 
 
+def to_per_transcript(results_df):
+    """
+    Collapse a one-row-per-(transcript, domain) results table into one
+    row per transcript with n_domains and a "[a, b, ...]"
+    domain_coverage list. Tables already in that form are returned
+    unchanged. Domains with no mappable residues (NaN coverage) are
+    left out.
+
+    Parameters
+    ----------
+    results_df: pandas.DataFrame
+
+    Returns
+    -------
+    pandas.DataFrame
+    """
+    if "domain_coverage" in results_df.columns:
+        return results_df
+    scored = results_df.dropna(subset=["coverage"])
+    grouped = scored.groupby(KEY_COLUMNS, sort=False)["coverage"]
+    per_transcript = grouped.agg(n_domains="size",
+                                 domain_coverage=lambda values: str([float(v) for v in values]))
+    return per_transcript.reset_index()
+
+
 def compute_asif(results_df, expression_df, alpha, beta, suffix="_TPM"):
     """
     Build the ASIF table.
@@ -99,6 +127,7 @@ def compute_asif(results_df, expression_df, alpha, beta, suffix="_TPM"):
     if not expression_columns:
         raise ValueError("No expression columns ending in '%s' found" % suffix)
 
+    results_df = to_per_transcript(results_df)
     merged = results_df.merge(expression_df[KEY_COLUMNS + expression_columns], on=KEY_COLUMNS)
     factors = merged["domain_coverage"].map(lambda value: impact_factor(parse_coverage(value), alpha, beta))
 
@@ -136,7 +165,7 @@ if __name__ == "__main__":
     asif_df = compute_asif(results_df, expression_df, args.alpha, args.beta, args.suffix)
     asif_df.to_csv(args.output, sep="\t", index=False)
 
-    n_results = len(results_df)
+    n_results = len(to_per_transcript(results_df))
     if asif_df.empty:
         print("WARNING: no transcripts in %s matched %s" % (args.results, args.expression), file=sys.stderr)
     print("Wrote %d of %d transcripts (%d not in expression file) -> %s"

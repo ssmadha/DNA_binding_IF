@@ -2,18 +2,23 @@
 """
 Merge per-gene download_gene.py outputs into one TSV.
 
-Each per-gene file is download_gene.py's stdout: a header line with the
-gene ID, then one 4-line record per transcript as printed by
-Transcript.align_to_reference:
+Current per-gene outputs (ENSG*.tsv) are already TSVs with a header (see
+TF_ASIF.matching.COVERAGE_COLUMNS: one row per transcript and domain);
+they are concatenated under a single header.
+
+Older runs (ENSG*.txt) are download_gene.py's former printed output: a
+header line with the gene ID, then one 4-line record per transcript as
+printed by Transcript.align_to_reference:
 
     ENSG...                     gene ID
     ENST...                     transcript ID
     <int>                       number of superisoform domains
     [<float>, <float>, ...]     per-domain coverage of this transcript
 
-Output columns: gene_id, transcript_id, n_domains, domain_coverage
-(domain_coverage kept in the same "[a, b, ...]" list form as the input).
-Transcripts with n_domains == 0 are dropped unless --keep-empty is set.
+These are parsed into columns gene_id, transcript_id, n_domains,
+domain_coverage (domain_coverage kept in the same "[a, b, ...]" list form
+as the input); transcripts with n_domains == 0 are dropped unless
+--keep-empty is set.
 """
 import argparse
 import glob
@@ -71,19 +76,52 @@ def get_args():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-i", "--input-dir", required=True,
-                        help="Directory of per-gene output files (ENSG*.txt)")
+                        help="Directory of per-gene output files (ENSG*.tsv, or ENSG*.txt from older runs)")
     parser.add_argument("-o", "--output", required=True,
                         help="Path to write the merged TSV to")
     parser.add_argument("--keep-empty", action="store_true",
-                        help="Keep transcripts with n_domains == 0 (dropped by default)")
+                        help="Older (.txt) runs only: keep transcripts with n_domains == 0 (dropped by default)")
     return parser.parse_args()
+
+
+def merge_tsv_files(gene_files, output):
+    """
+    Concatenate per-gene TSV outputs under one header.
+
+    Parameters
+    ----------
+    gene_files: list[str]
+    output: str
+    """
+    header = None
+    n_rows = 0
+    with open(output, "w") as out:
+        for path in gene_files:
+            with open(path) as handle:
+                file_header = handle.readline()
+                if header is None:
+                    header = file_header
+                    out.write(header)
+                elif file_header != header:
+                    sys.exit("Header of %s does not match the other files" % path)
+                for line in handle:
+                    if line.strip():
+                        out.write(line)
+                        n_rows += 1
+    print("Merged %d gene files: wrote %d rows -> %s" % (len(gene_files), n_rows, output), file=sys.stderr)
 
 
 if __name__ == "__main__":
     args = get_args()
+    tsv_files = sorted(glob.glob(os.path.join(args.input_dir, "ENSG*.tsv")))
     gene_files = sorted(glob.glob(os.path.join(args.input_dir, "ENSG*.txt")))
+    if tsv_files and gene_files:
+        sys.exit("Found both ENSG*.tsv and older ENSG*.txt outputs in " + args.input_dir + "; merge them separately")
+    if tsv_files:
+        merge_tsv_files(tsv_files, args.output)
+        sys.exit(0)
     if not gene_files:
-        print("WARNING: no ENSG*.txt files found in " + args.input_dir, file=sys.stderr)
+        print("WARNING: no ENSG*.tsv or ENSG*.txt files found in " + args.input_dir, file=sys.stderr)
 
     n_written = 0
     n_empty = 0

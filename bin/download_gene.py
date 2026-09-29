@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 import argparse
+import csv
 import sys
 
 import TF_ASIF.gene as gene
+from TF_ASIF.matching import COVERAGE_COLUMNS
 
 def get_args():
     getoptions = argparse.ArgumentParser()
@@ -35,15 +37,31 @@ def get_args():
                                   mutually overlapping domains (across all transcripts) down to the largest \
                                   domain in each overlapping group. Default: overlap collapsing is on.")
 
+    getoptions.add_argument("-M", "--matchmode",
+                            default="segment",
+                            choices=["segment", "alignment"],
+                            help="How transcripts are matched to domains: exact codon matching against a \
+                                  segment superisoform, or the original protein alignment. (Default: %(default)s)")
+    getoptions.add_argument("-i", "--identicalonly",
+                            action="store_true",
+                            help="Only count a reference residue as covered when it aligns to an identical \
+                                  residue (mismatches count as uncovered, like gaps). Alignment mode only. \
+                                  Default: any aligned residue counts as covered.")
+
     return getoptions.parse_args()
 
 
 if __name__ == "__main__":
     args = get_args()
-    print(args.ensgid)
+    # Coverage table goes to stdout (TSV, header always written);
+    # warnings and messages go to stderr.
+    writer = csv.DictWriter(sys.stdout, fieldnames=COVERAGE_COLUMNS, delimiter="\t", lineterminator="\n")
+    writer.writeheader()
     if args.ensgid.startswith("ENSG"):
         test_gene = gene.Gene(args.ensgid, ppi_binding_site_file=args.ppibindingsitefile,
                               cds_fasta_file=args.cdsfastafile, uniprot_mapping_file=args.uniprotmappingfile,
                               gtf_file=args.gtffile, interpro_domains_file=args.interprodomainsfile,
                               refmode=args.refmode, domain_filter=args.domains,
-                              merge_overlapping_domains=not args.keepoverlappingdomains)
+                              merge_overlapping_domains=not args.keepoverlappingdomains,
+                              identical_only=args.identicalonly, matchmode=args.matchmode)
+        writer.writerows(test_gene.coverage_rows)

@@ -341,11 +341,11 @@ class Transcript:
             domain.types = ["PPI"]
         return domains
 
-    def align_to_reference(self, refmode="superisoform", alignmode="global"):
+    def align_to_reference(self, refmode="superisoform", alignmode="global", identical_only=False):
         """
         Globally align this transcript's protein sequence to a
-        reference sequence, and print the coverage percentage of each
-        superdomain that overlaps the best-covering alignment.
+        reference sequence, and return the coverage percentage of each
+        superdomain over the best-covering alignment.
 
         Parameters
         ----------
@@ -356,6 +356,16 @@ class Transcript:
         alignmode : str, optional
             Intended alignment mode for the pairwise aligner. Currently
             unused; the aligner mode is hardcoded to "global".
+        identical_only : bool, optional
+            If True, a reference residue only counts as covered when it
+            is aligned to an identical residue; mismatches count as
+            uncovered, like gaps. If False (default), any aligned
+            residue counts as covered.
+
+        Returns
+        -------
+        dict[str, float]
+            Coverage fraction keyed by superdomain ID.
         """
         aligner = Align.PairwiseAligner()
         aligner.match_score = 10
@@ -378,8 +388,19 @@ class Transcript:
 
         isoform_coverage_percentages = {}
         for i in range(len(alignments)):
+            # One character per reference position (domain positions are in
+            # reference coordinates): the transcript residue aligned there,
+            # or "-" if none (or, with identical_only, if it differs).
+            # Transcript residues with no reference position (insertions)
+            # are skipped rather than shifting later positions.
+            target_indices, query_indices = alignments[i].indices
+            aligned_query = ["-"] * len(ref_seq)
+            for k, j in zip(target_indices, query_indices):
+                if k != -1 and j != -1 and not (identical_only and ref_seq[k] != transcript_seq[j]):
+                    aligned_query[k] = transcript_seq[j]
+            aligned_query = "".join(aligned_query)
             for domain in superdomains:
-                domain_query = domain.pos.extract("".join([alignments[i].query[j] if j!=-1 else "-" for j in alignments[i].indices[1]]))
+                domain_query = domain.pos.extract(aligned_query)
                 # print(domain_query)
                 # print(len(domain_query))
                 # print(alignments[i].counts())
@@ -388,10 +409,7 @@ class Transcript:
                         isoform_coverage_percentages[domain.domain_id] < overlap_perc:
                     # print(alignments[i])
                     isoform_coverage_percentages[domain.domain_id] = overlap_perc
-        print(self.gene.ensg_id)
-        print(self.enst_id)
-        print(len(isoform_coverage_percentages))
-        print(list(isoform_coverage_percentages.values()))
+        return isoform_coverage_percentages
 
     def __repr__(self):
         """

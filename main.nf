@@ -9,7 +9,11 @@ nextflow.enable.dsl=2
 params.outdir = "results"
 params.domains = "ppi_domain dbi"
 // true passes --keepoverlappingdomains (skip collapsing overlapping domains).
-params.keep_overlapping_domains = true
+params.keep_overlapping_domains = false
+// true passes --identicalonly (count only identical aligned residues as covered).
+params.identical_only = false
+// "segment" (exact codon matching) or "alignment" (original protein alignment).
+params.match_mode = "segment"
 // Comma-separated transcript expression TSV(s) (gene_id, transcript_id,
 // <tissue>_TPM, ...); one ASIF table is written per file. Unset skips ASIF.
 params.expression_files = null
@@ -104,11 +108,11 @@ process DOWNLOAD_GENE {
     path interpro_domains_file
 
     output:
-    tuple val(gene_name), path("${gene_name}.txt")
+    tuple val(gene_name), path("${gene_name}.tsv")
 
     script:
     """
-    download_gene.py ${params.keep_overlapping_domains ? '--keepoverlappingdomains' : ''} -d ${params.domains} -e ${gene_name} -b ${params.ppi_binding_site_file} -c ${params.cds_fasta_file} -u ${params.uniprot_mapping_file} -g ${params.gtf_file} -p ${params.interpro_domains_file}> ${gene_name}.txt
+    download_gene.py ${params.keep_overlapping_domains ? '--keepoverlappingdomains' : ''} ${params.identical_only ? '--identicalonly' : ''} --matchmode ${params.match_mode} -d ${params.domains} -e ${gene_name} -b ${params.ppi_binding_site_file} -c ${params.cds_fasta_file} -u ${params.uniprot_mapping_file} -g ${params.gtf_file} -p ${params.interpro_domains_file} > ${gene_name}.tsv
     """
 }
 

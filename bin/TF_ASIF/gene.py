@@ -1,11 +1,14 @@
 import gzip
 import random
 import re
+import sys
 
 from Bio import SeqFeature
 from Bio.SeqFeature import SimpleLocation
 
+from . import matching
 from .domain import Domain
+from .superisoform import Superisoform
 from .transcript import Transcript
 
 class Gene:
@@ -18,17 +21,19 @@ class Gene:
     _gtf_index = None
     _gtf_cds_blocks = None
     _gtf_exon_coords = None
+    _gtf_coding_blocks = None
     _gtf_gene_info = None
 
     def __init__(self, ensg_id: str, ppi_binding_site_file, cds_fasta_file, uniprot_mapping_file,
                  gtf_file, interpro_domains_file=None, biotype_filter=None, refmode="superisoform",
-                 domain_filter=None, merge_overlapping_domains=True):
+                 domain_filter=None, merge_overlapping_domains=True, identical_only=False,
+                 matchmode="segment"):
         """
         Constructor
 
-        Downloads gene and transcript information, builds the transcripts'
-        domains, and (if requested) generates and aligns a superisoform
-        reference.
+        Looks up gene and transcript information, gathers the gene's
+        domains, and scores how much of each domain every transcript
+        covers, into self.coverage_rows (see matching.COVERAGE_COLUMNS).
 
         Parameters
         ----------
@@ -58,7 +63,7 @@ class Gene:
             Ensembl transcript biotypes to keep. Defaults to
             ['protein_coding'].
         refmode : str, optional
-            Reference mode used to align transcripts. "superisoform"
+            Alignment mode only: reference used to align transcripts. "superisoform"
             generates a combined-exon reference sequence; any other
             value aligns to the first transcript instead.
         domain_filter : list, optional
@@ -70,7 +75,22 @@ class Gene:
             all transcripts) down to the largest domain in each
             overlapping group. If False, no overlap collapsing is
             done.
+        identical_only : bool, optional
+            Alignment mode only: passed through to
+            Transcript.align_to_reference. If True, only reference
+            residues aligned to an identical residue count as covered.
+            Defaults to False.
+        matchmode : str, optional
+            "segment" (default): build a segment superisoform from every
+            transcript passing biotype_filter and score each transcript
+            by exact codon matching (see matching.segment_coverage_rows).
+            "alignment": the original method - align UniProt-mapped
+            transcripts to a protein superisoform (generate_superisoform,
+            Transcript.align_to_reference).
         """
+        if matchmode not in ("segment", "alignment"):
+            raise ValueError("matchmode must be 'segment' or 'alignment', not " + repr(matchmode))
+        self.coverage_rows = []
         if biotype_filter is None:
             biotype_filter = ['protein_coding']
         if domain_filter is None:
@@ -78,12 +98,19 @@ class Gene:
         self.ensg_id = ensg_id
         gene_info = self._get_gtf_gene_info(gtf_file).get(ensg_id)
         if gene_info is None:
-            print(ensg_id + " not found in " + gtf_file)
+            print(ensg_id + " not found in " + gtf_file, file=sys.stderr)
             return
         self.symbol = gene_info["symbol"]
         self.start_pos = gene_info["start"]
         self.end_pos = gene_info["end"]
         self.strand = gene_info["strand"]
+        if matchmode == "segment":
+            self.superisoform = self.build_segment_superisoform(gtf_file, biotype_filter=biotype_filter)
+            self.coverage_rows = matching.segment_coverage_rows(
+                self, self.superisoform, domain_filter, merge_overlapping=merge_overlapping_domains,
+                ppi_binding_site_file=ppi_binding_site_file, interpro_domains_file=interpro_domains_file,
+                uniprot_mapping_file=uniprot_mapping_file, gtf_file=gtf_file)
+            return
         # print("downloading transcripts")
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter=biotype_filter,
                                                      domain_types=domain_filter, ppi_binding_site_file=ppi_binding_site_file,
@@ -98,8 +125,23 @@ class Gene:
         # print(self.superisoform_seq)
         # print(self.superdomains)
         # print("aligning to superisoform")
+        superdomains = {domain.domain_id: domain for domain in getattr(self, "superdomains", [])}
         for transcript in self.transcripts:
-            transcript.align_to_reference(refmode=refmode)
+            coverages = transcript.align_to_reference(refmode=refmode, identical_only=identical_only)
+            for domain_id, coverage in coverages.items():
+                domain = superdomains.get(domain_id)
+                n_residues = len(domain.pos) if domain is not None else None
+                self.coverage_rows.append({
+                    "gene_id": self.ensg_id,
+                    "transcript_id": transcript.enst_id,
+                    "domain_id": domain_id,
+                    "domain_type": "",
+                    "source_transcript_id": "",
+                    "positions": "%d-%d" % (domain.start + 1, domain.end) if domain is not None else "",
+                    "n_residues": n_residues,
+                    "n_covered": round(coverage * n_residues) if n_residues is not None else None,
+                    "coverage": coverage,
+                })
 
     def download_transcripts(self, ensg_id=None, biotype_filter=None, domain_types=None, ppi_binding_site_file=None,
                              cds_fasta_file=None, uniprot_mapping_file=None, gtf_file=None,
@@ -157,7 +199,7 @@ class Gene:
             ensg_id = self.ensg_id
         isoforms = self._get_gtf_index(gtf_file).get(ensg_id)
         if not isoforms:
-            print(ensg_id + " not found")
+            print(ensg_id + " not found", file=sys.stderr)
             return []
 
         gtf_cds_blocks = self._get_gtf_cds_blocks(gtf_file)
@@ -241,7 +283,7 @@ class Gene:
                         if feature == "CDS":
                             transcript_protein_ids.setdefault(transcript_id, attributes.get("protein_id"))
                         cds_blocks.setdefault(transcript_id, []).append(
-                            (int(fields[3]), int(fields[4]), fields[6], fields[7]))
+                            (int(fields[3]), int(fields[4]), fields[6], fields[7], feature))
                     elif feature == "gene":
                         attributes = dict(attribute_re.findall(fields[8]))
                         gene_info[attributes["gene_id"]] = {
@@ -259,12 +301,17 @@ class Gene:
                 })
             gtf_cds_blocks = {}
             gtf_exon_coords = {}
+            gtf_coding_blocks = {}
             for transcript_id, blocks in cds_blocks.items():
                 blocks = sorted(blocks, key=lambda block: block[0])
                 if blocks[0][2] == "-":
                     blocks = blocks[::-1]
-                lengths = [end - start + 1 for start, end, strand, frame in blocks]
-                coords = [(start, end, frame) for start, end, strand, frame in blocks]
+                lengths = [end - start + 1 for start, end, strand, frame, feature in blocks]
+                coords = [(start, end, frame) for start, end, strand, frame, feature in blocks]
+                coding = [(start, end, frame) for start, end, strand, frame, feature in blocks
+                          if feature == "CDS"]
+                if coding:
+                    gtf_coding_blocks[transcript_id] = coding
                 # A transcript with an incomplete (5' truncated) CDS starts
                 # mid-codon; Ensembl's CDS FASTA left-pads it with Ns to a
                 # full codon, per the GTF frame of the first CDS block. This
@@ -279,6 +326,7 @@ class Gene:
             cls._gtf_index = gtf_index
             cls._gtf_cds_blocks = gtf_cds_blocks
             cls._gtf_exon_coords = gtf_exon_coords
+            cls._gtf_coding_blocks = gtf_coding_blocks
             cls._gtf_gene_info = gene_info
         return cls._gtf_index
 
@@ -336,6 +384,62 @@ class Gene:
         """
         cls._get_gtf_index(gtf_file)
         return cls._gtf_exon_coords
+
+    @classmethod
+    def _get_gtf_coding_blocks(cls, gtf_file):
+        """
+        Load and cache, from an Ensembl GTF annotation file, each
+        coding transcript's CDS blocks alone (no stop codon, no
+        synthetic padding block), in transcript order. The file is only
+        parsed once per process (shared with _get_gtf_index);
+        subsequent calls reuse the cache.
+
+        Parameters
+        ----------
+        gtf_file: str
+            Path to a (optionally gzipped) Ensembl GTF annotation
+            file.
+
+        Returns
+        -------
+        dict[str, list[tuple]]
+            For each Ensembl Transcript ID, a list of (genomic start,
+            genomic end, GTF frame) tuples, in transcript order.
+        """
+        cls._get_gtf_index(gtf_file)
+        return cls._gtf_coding_blocks
+
+    def build_segment_superisoform(self, gtf_file, cds_fasta_file=None, biotype_filter=None):
+        """
+        Build a segment-based superisoform from every transcript of
+        this gene that passes biotype_filter, whether or not it has a
+        UniProt ID. Every CDS block is cut at every CDS boundary found
+        across those transcripts, so transcripts share segments
+        exactly or not at all (see Superisoform).
+
+        Parameters
+        ----------
+        gtf_file : str
+            Path to a (optionally gzipped) Ensembl GTF annotation file.
+        cds_fasta_file : str, optional
+            Path to a (optionally gzipped) Ensembl "cds.all.fa" FASTA
+            file, used to fill in segment nucleotide sequences.
+        biotype_filter : list, optional
+            Ensembl transcript biotypes to include. Defaults to
+            ['protein_coding'].
+
+        Returns
+        -------
+        Superisoform
+        """
+        if biotype_filter is None:
+            biotype_filter = ['protein_coding']
+        coding_blocks = self._get_gtf_coding_blocks(gtf_file)
+        transcript_blocks = {isoform['id']: coding_blocks[isoform['id']]
+                             for isoform in self._get_gtf_index(gtf_file).get(self.ensg_id, [])
+                             if isoform['biotype'] in biotype_filter and isoform['id'] in coding_blocks}
+        cds_sequences = Transcript._get_cds_sequences(cds_fasta_file) if cds_fasta_file else None
+        return Superisoform(self.ensg_id, self.strand, transcript_blocks, cds_sequences)
 
     @classmethod
     def _get_gtf_gene_info(cls, gtf_file):

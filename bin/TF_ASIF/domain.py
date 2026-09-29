@@ -10,6 +10,9 @@ DEFAULT_DNA_BINDING_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..",
     "reference_data", "interpro_superfamily_domains_DBD.tsv")
 
+# DNA-binding classification tables, keyed by file path; read once per process.
+_dna_binding_tables = {}
+
 
 class Domain:
     """
@@ -56,6 +59,10 @@ class Domain:
             Comma-separated list of "start-end" segments or lone
             positions, e.g. "104-352" (one contiguous span) or
             "23-37,39-43,61,94,96,99-110" (a discontinuous site).
+            Positions are 1-based and inclusive (UniProt/InterPro
+            residue numbering); they are stored as 0-based half-open
+            locations, so "104-352" becomes FeatureLocation(103, 352)
+            and "61" becomes FeatureLocation(60, 61).
         source: source
 
         Returns
@@ -66,12 +73,14 @@ class Domain:
         for segment in positions_str.split(","):
             if "-" in segment:
                 start, end = segment.split("-")
-                locations.append(SeqFeature.FeatureLocation(int(start), int(end)))
+                locations.append(SeqFeature.FeatureLocation(int(start) - 1, int(end)))
             else:
                 pos = int(segment)
-                locations.append(SeqFeature.FeatureLocation(pos, pos))
+                locations.append(SeqFeature.FeatureLocation(pos - 1, pos))
         positions = locations[0] if len(locations) == 1 else SeqFeature.CompoundLocation(locations)
-        return cls(domain_id, positions, source)
+        domain = cls(domain_id, positions, source)
+        domain.positions_str = positions_str
+        return domain
 
     def determine_types(self):
         """
@@ -108,7 +117,9 @@ class Domain:
             is not sourced from SuperFamily, or is not found in the
             file.
         """
-        interpro_superfamily_domains_DBD = pd.read_csv(dna_binding_file, sep='\t', index_col=0)
+        if dna_binding_file not in _dna_binding_tables:
+            _dna_binding_tables[dna_binding_file] = pd.read_csv(dna_binding_file, sep='\t', index_col=0)
+        interpro_superfamily_domains_DBD = _dna_binding_tables[dna_binding_file]
         if (self.domain_id is None or self.source!="SuperFamily" or
                 self.domain_id not in interpro_superfamily_domains_DBD.index):
             return False
