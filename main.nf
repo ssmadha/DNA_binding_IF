@@ -2,11 +2,16 @@
 
 nextflow.enable.dsl=2
 
-// Domain types passed to download_gene.py -d (space-separated; any of
-// ppi_domain, ppi_bs, dbi). e.g. --domains ppi_bs for PPI binding sites only.
 // Where results are published; set per run (e.g. --outdir results_ppi)
 // to avoid overwriting earlier runs.
 params.outdir = "results"
+// Genes scored per DOWNLOAD_GENES task; reference files load once per task.
+params.batch_size = 200
+// Seconds before a single gene is skipped (and listed in failed_genes.txt)
+// so one slow gene can't stall its batch; 0 = no limit.
+params.gene_timeout = 900
+// Domain types passed to download_gene.py -d (space-separated; any of
+// ppi_domain, ppi_bs, dbi). e.g. --domains ppi_bs for PPI binding sites only.
 params.domains = "ppi_domain dbi"
 // true passes --keepoverlappingdomains (skip collapsing overlapping domains).
 params.keep_overlapping_domains = false
@@ -82,20 +87,23 @@ process DOWNLOAD_INTERPRO_DOMAINS {
     """
 }
 
-process DOWNLOAD_GENE {
+process DOWNLOAD_GENES {
 
-    time { 15.m * task.attempt }
-    // Retry twice, then skip the gene rather than aborting the whole run;
-    // skipped genes end up in <outdir>/failed_genes.txt.
+    // Room for loading reference files plus every gene in the batch
+    // hitting --genetimeout; a gene that errors or times out is skipped
+    // inside the task, so this limit only guards against a hung task.
+    time { (30.m + 1.s * gene_batch.size() * (params.gene_timeout ?: 60)) * task.attempt }
+    // Retry twice, then give up on the batch rather than aborting the whole
+    // run; its genes end up in <outdir>/failed_genes.txt.
     errorStrategy { task.attempt <= 2 ? 'retry' : 'ignore' }
     maxRetries 2
 
-    publishDir "${params.outdir}/individual", mode: 'copy'
+    publishDir "${params.outdir}/batches", mode: 'copy'
 
     conda "${projectDir}/environment.yaml"
 
     input:
-    val gene_name
+    val gene_batch
     // Not referenced by name in the script below (it uses the
     // params.*_file paths directly), but declaring them as inputs
     // here makes this process wait on DOWNLOAD_GTF/DOWNLOAD_CDS_FASTA/
@@ -108,11 +116,13 @@ process DOWNLOAD_GENE {
     path interpro_domains_file
 
     output:
-    tuple val(gene_name), path("${gene_name}.tsv")
+    path "${gene_batch[0]}_batch.tsv", emit: results
+    path "${gene_batch[0]}_batch.done", emit: done
 
     script:
     """
-    download_gene.py ${params.keep_overlapping_domains ? '--keepoverlappingdomains' : ''} ${params.identical_only ? '--identicalonly' : ''} --matchmode ${params.match_mode} -d ${params.domains} -e ${gene_name} -b ${params.ppi_binding_site_file} -c ${params.cds_fasta_file} -u ${params.uniprot_mapping_file} -g ${params.gtf_file} -p ${params.interpro_domains_file} > ${gene_name}.tsv
+    printf "%s\n" ${gene_batch.join(' ')} > genes.txt
+    download_gene.py ${params.keep_overlapping_domains ? '--keepoverlappingdomains' : ''} ${params.identical_only ? '--identicalonly' : ''} --matchmode ${params.match_mode} -d ${params.domains} --genesfile genes.txt --genetimeout ${params.gene_timeout} --output ${gene_batch[0]}_batch.tsv --donefile ${gene_batch[0]}_batch.done -b ${params.ppi_binding_site_file} -c ${params.cds_fasta_file} -u ${params.uniprot_mapping_file} -g ${params.gtf_file} -p ${params.interpro_domains_file}
     """
 }
 
@@ -121,7 +131,7 @@ process MERGE_RESULTS {
     publishDir params.outdir, mode: 'copy'
 
     input:
-    path gene_files, stageAs: "individual/*"
+    path gene_files, stageAs: "batches/*"
 
     output:
     path "all_results.tsv"
@@ -130,7 +140,7 @@ process MERGE_RESULTS {
     // arguments, so tens of thousands of genes don't hit ARG_MAX.
     script:
     """
-    merge_gene_results.py --input-dir individual --output all_results.tsv
+    merge_gene_results.py --input-dir batches --output all_results.tsv
     """
 }
 
@@ -187,18 +197,23 @@ workflow {
     uniprot_mapping_file = DOWNLOAD_UNIPROT_MAPPING()
     interpro_domains_file = DOWNLOAD_INTERPRO_DOMAINS()
 
-    gene_outputs = DOWNLOAD_GENE(genes, gtf_file, cds_fasta_file, uniprot_mapping_file, interpro_domains_file)
+    gene_outputs = DOWNLOAD_GENES(genes.collate(params.batch_size), gtf_file, cds_fasta_file,
+                                  uniprot_mapping_file, interpro_domains_file)
 
-    // Genes with no output after all retries. ifEmpty([]) keeps these
-    // steps running even if every gene fails; wrapping each list in [ ]
-    // stops combine() from flattening the two lists into one.
+    // Failed genes = every gene not listed in some batch's .done file
+    // (covers genes skipped inside a batch and whole batches that failed).
+    // ifEmpty([]) keeps these steps running even if every gene fails;
+    // wrapping each list in [ ] stops combine() from flattening the two
+    // lists into one.
     all_genes_list = genes.collect().map { [it] }
-    successful_list = gene_outputs.map { it[0] }.collect().ifEmpty([]).map { [it] }
+    successful_list = gene_outputs.done
+        .flatMap { it.readLines().findAll { line -> line.trim() } }
+        .collect().ifEmpty([]).map { [it] }
     failed_genes = all_genes_list
         .combine(successful_list)
         .map { all, success -> all - success }
 
-    all_results = MERGE_RESULTS(gene_outputs.map{ it[1] }.collect().ifEmpty([]))
+    all_results = MERGE_RESULTS(gene_outputs.results.collect().ifEmpty([]))
 
     if (params.expression_files) {
         expression_files = Channel.fromPath(params.expression_files.tokenize(','), checkIfExists: true)

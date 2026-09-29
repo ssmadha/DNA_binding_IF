@@ -32,6 +32,10 @@ INT_RE = re.compile(r"^\d+$")
 LIST_RE = re.compile(r"^\[.*\]$")
 
 COLUMNS = ["gene_id", "transcript_id", "n_domains", "domain_coverage"]
+# Header of current per-gene TSVs; same as TF_ASIF.matching.COVERAGE_COLUMNS
+# (not imported, so this script keeps running without pandas/biopython).
+COVERAGE_COLUMNS = ["gene_id", "transcript_id", "domain_id", "domain_type", "source_transcript_id",
+                    "positions", "n_residues", "n_covered", "coverage"]
 
 
 def parse_gene_file(path):
@@ -122,6 +126,9 @@ if __name__ == "__main__":
         sys.exit(0)
     if not gene_files:
         print("WARNING: no ENSG*.tsv or ENSG*.txt files found in " + args.input_dir, file=sys.stderr)
+        with open(args.output, "w") as out:
+            out.write("\t".join(COVERAGE_COLUMNS) + "\n")
+        sys.exit(0)
 
     n_written = 0
     n_empty = 0

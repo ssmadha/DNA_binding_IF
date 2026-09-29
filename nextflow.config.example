@@ -9,6 +9,8 @@ process {
 
 params {
     outdir = "results"
+    batch_size = 200
+    gene_timeout = 900
     genes_file = "${projectDir}/reference_data/expressed_coding_isoforms_with_relative_tpm_threshold_1_geneIDs.txt"
     ppi_binding_site_file = "${projectDir}/reference_data/ppi_binding_sites.tsv"
     cds_fasta_file = "${projectDir}/reference_data/Homo_sapiens.GRCh38.cds.all.fa.gz"
