@@ -1,3 +1,6 @@
+import gzip
+import re
+
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -18,6 +21,8 @@ NODE_DEGREE_CUTOFF = 50
 ppi_file = "results_segment_ppi/expressed_coding_isoforms_with_relative_tpm_threshold_1_ASIF.tsv"
 degree_file = "node_degree_df.tsv"
 mapping_file = "mane_select_with_uniprot_id_mapping2.csv"
+# Gene names (row labels) come from the same Ensembl GTF the pipeline uses
+gtf_file = "reference_data/Homo_sapiens.GRCh38.109.gtf.gz"
 
 
 # ============================================================
@@ -161,6 +166,34 @@ node_degree = heatmap_df["node_degree"]
 heatmap_values = heatmap_df.drop(
     columns="node_degree"
 )
+
+
+# ============================================================
+# 9b. Label rows with gene names instead of Ensembl IDs
+# ============================================================
+
+gene_names = {}
+with gzip.open(gtf_file, "rt") as handle:
+    for line in handle:
+        fields = line.split("\t")
+        if len(fields) > 8 and fields[2] == "gene":
+            gene_id = re.search(r'gene_id "([^"]+)"', fields[8]).group(1)
+            name = re.search(r'gene_name "([^"]+)"', fields[8])
+            if name:
+                gene_names[gene_id] = name.group(1)
+
+# Fall back to the Ensembl ID for genes without a name, and keep the
+# ID alongside any name shared by more than one gene in the figure
+labels = pd.Series(
+    [gene_names.get(gene_id, gene_id) for gene_id in heatmap_values.index],
+    index=heatmap_values.index
+)
+duplicated = labels.duplicated(keep=False)
+labels[duplicated] = [
+    f"{label} ({gene_id})"
+    for gene_id, label in labels[duplicated].items()
+]
+heatmap_values.index = labels.values
 
 
 # ============================================================
