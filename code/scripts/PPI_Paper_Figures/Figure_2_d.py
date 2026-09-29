@@ -15,7 +15,7 @@ NODE_DEGREE_CUTOFF = 50
 # File paths
 # ============================================================
 
-ppi_file = "PPI_ASIF_table2.tsv"
+ppi_file = "results_segment_ppi/expressed_coding_isoforms_with_relative_tpm_threshold_1_ASIF.tsv"
 degree_file = "node_degree_df.tsv"
 mapping_file = "mane_select_with_uniprot_id_mapping2.csv"
 

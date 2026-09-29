@@ -9,28 +9,28 @@ from matplotlib.patches import Ellipse
 
 df = pd.read_csv("reference_data/ppi_binding_sites.tsv", sep="\t")
 
-bc = df[df["Source"] == "bc"].copy()
-w = df[df["Source"] == "w"].copy()
-bc_w = df[df["Source"] == "bc_w"].copy()
+bc = df[df["source"] == "bc"].copy()
+w = df[df["source"] == "w"].copy()
+bc_w = df[df["source"] == "bc_w"].copy()
 
 # Add bc_w binding sites to BOTH bc and w
 bc = pd.concat([bc, bc_w])
 w = pd.concat([w, bc_w])
 
 # Count binding sites per UniProt ID
-bc_counts = bc.groupby("UniProt").size()
-w_counts = w.groupby("UniProt").size()
+bc_counts = bc.groupby("protein_id").size()
+w_counts = w.groupby("protein_id").size()
 
 # Total remains based on original data
-total_counts = df.groupby("UniProt").size()
+total_counts = df.groupby("protein_id").size()
 
 
 # ============================================================
 # Venn diagram data
 # ============================================================
 
-bc_proteins = set(bc["UniProt"].dropna())
-w_proteins = set(w["UniProt"].dropna())
+bc_proteins = set(bc["protein_id"].dropna())
+w_proteins = set(w["protein_id"].dropna())
 
 bc_only = bc_proteins - w_proteins
 w_only = w_proteins - bc_proteins
@@ -69,7 +69,7 @@ def plot_binding_hist(ax, counts, title, fontsize=8):
     )
 
     ax.set_ylabel(
-        "Number of Genes",
+        "Number of Proteins",
         fontsize=fontsize
     )
 
