@@ -24,8 +24,11 @@ expression: TSV with gene_id, transcript_id, then one column per
     Columns not ending in the suffix are ignored.
 
 Output columns: gene_id, transcript_id, n_domains, domain_coverage, then
+(when the results have a domain_type column) n_<type>_domains and
+<type>_coverage for each domain type in DOMAIN_TYPES, then
 "<tissue>_tpm", "<tissue>_asif" for each tissue, in the expression file's
-column order. Only transcripts present in both inputs are kept.
+column order. A domain of both types counts under each. Only transcripts
+present in both inputs are kept.
 """
 import argparse
 import sys
@@ -34,6 +37,13 @@ import numpy as np
 import pandas as pd
 
 KEY_COLUMNS = ["gene_id", "transcript_id"]
+# domain_type value (";"-separated in the results) -> output column prefix.
+DOMAIN_TYPES = {"DNA-binding": "dna_binding", "PPI": "ppi"}
+
+
+def coverage_list(values):
+    """Format coverages as a "[a, b, ...]" list string."""
+    return str([float(value) for value in values])
 
 
 def parse_coverage(coverage_str):
@@ -82,9 +92,11 @@ def to_per_transcript(results_df):
     """
     Collapse a one-row-per-(transcript, domain) results table into one
     row per transcript with n_domains and a "[a, b, ...]"
-    domain_coverage list. Tables already in that form are returned
-    unchanged. Domains with no mappable residues (NaN coverage) are
-    left out.
+    domain_coverage list, plus, if the table has a domain_type column,
+    n_<type>_domains and <type>_coverage for each DOMAIN_TYPES type
+    (a domain of both types counts under each). Tables already in that
+    form are returned unchanged. Domains with no mappable residues (NaN
+    coverage) are left out.
 
     Parameters
     ----------
@@ -98,9 +110,18 @@ def to_per_transcript(results_df):
         return results_df
     scored = results_df.dropna(subset=["coverage"])
     grouped = scored.groupby(KEY_COLUMNS, sort=False)["coverage"]
-    per_transcript = grouped.agg(n_domains="size",
-                                 domain_coverage=lambda values: str([float(v) for v in values]))
-    return per_transcript.reset_index()
+    per_transcript = grouped.agg(n_domains="size", domain_coverage=coverage_list).reset_index()
+    if "domain_type" not in scored.columns:
+        return per_transcript
+    types = scored["domain_type"].fillna("").str.split(";")
+    for domain_type, prefix in DOMAIN_TYPES.items():
+        of_type = scored[types.map(lambda value: domain_type in value)]
+        by_type = of_type.groupby(KEY_COLUMNS, sort=False)["coverage"].agg(
+            **{"n_%s_domains" % prefix: "size", "%s_coverage" % prefix: coverage_list}).reset_index()
+        per_transcript = per_transcript.merge(by_type, on=KEY_COLUMNS, how="left")
+        per_transcript["n_%s_domains" % prefix] = per_transcript["n_%s_domains" % prefix].fillna(0).astype(int)
+        per_transcript["%s_coverage" % prefix] = per_transcript["%s_coverage" % prefix].fillna("[]")
+    return per_transcript
 
 
 def compute_asif(results_df, expression_df, alpha, beta, suffix="_TPM"):
@@ -131,7 +152,9 @@ def compute_asif(results_df, expression_df, alpha, beta, suffix="_TPM"):
     merged = results_df.merge(expression_df[KEY_COLUMNS + expression_columns], on=KEY_COLUMNS)
     factors = merged["domain_coverage"].map(lambda value: impact_factor(parse_coverage(value), alpha, beta))
 
-    out = merged[["gene_id", "transcript_id", "n_domains", "domain_coverage"]].copy()
+    type_columns = [column for prefix in DOMAIN_TYPES.values()
+                    for column in ("n_%s_domains" % prefix, "%s_coverage" % prefix) if column in merged.columns]
+    out = merged[["gene_id", "transcript_id", "n_domains", "domain_coverage"] + type_columns].copy()
     new_columns = {}
     for column in expression_columns:
         tissue = column[:-len(suffix)]

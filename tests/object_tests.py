@@ -7,7 +7,9 @@ from bin.TF_ASIF.transcript import Transcript
 from bin.TF_ASIF.domain import Domain, load_ppi_pfam_families
 from bin.TF_ASIF.superisoform import Superisoform
 from bin.TF_ASIF import matching
+from bin import compute_asif
 from Bio.Seq import Seq
+import pandas as pd
 
 
 def _make_domain(types, start=0, end=10):
@@ -350,6 +352,29 @@ class TestSegmentMatching(unittest.TestCase):
         own = [row for row in rows if row["transcript_id"] == row["source_transcript_id"]]
         self.assertEqual({row["source_transcript_id"] for row in own}, {"ENST00000371588"})
         self.assertTrue(all(row["coverage"] == 1.0 for row in own))
+
+
+class TestComputeAsif(unittest.TestCase):
+    def test_coverage_reported_per_domain_type(self):
+        results = pd.DataFrame({
+            "gene_id": ["G"] * 4,
+            "transcript_id": ["T1", "T1", "T1", "T2"],
+            "domain_type": ["DNA-binding;PPI", "PPI", "DNA-binding", "PPI"],
+            "coverage": [0.5, 1.0, 0.0, 0.25],
+        })
+        per_transcript = compute_asif.to_per_transcript(results).set_index("transcript_id")
+        self.assertEqual(per_transcript.loc["T1", "n_domains"], 3)
+        self.assertEqual(per_transcript.loc["T1", "n_dna_binding_domains"], 2)
+        self.assertEqual(per_transcript.loc["T1", "dna_binding_coverage"], "[0.5, 0.0]")
+        self.assertEqual(per_transcript.loc["T1", "n_ppi_domains"], 2)
+        self.assertEqual(per_transcript.loc["T1", "ppi_coverage"], "[0.5, 1.0]")
+        self.assertEqual(per_transcript.loc["T2", "n_dna_binding_domains"], 0)
+        self.assertEqual(per_transcript.loc["T2", "dna_binding_coverage"], "[]")
+        self.assertEqual(per_transcript.loc["T2", "ppi_coverage"], "[0.25]")
+
+    def test_legacy_results_have_no_type_columns(self):
+        results = pd.DataFrame({"gene_id": ["G"], "transcript_id": ["T1"], "coverage": [0.5]})
+        self.assertNotIn("ppi_coverage", compute_asif.to_per_transcript(results).columns)
 
 
 class TestGene(unittest.TestCase):
