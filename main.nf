@@ -87,6 +87,42 @@ process DOWNLOAD_INTERPRO_DOMAINS {
     """
 }
 
+process DOWNLOAD_PFAM_DOMAINS {
+
+    // Pfam hits per Ensembl protein, the evidence for PPI domains; same
+    // BioMart route (and flakiness) as DOWNLOAD_INTERPRO_DOMAINS.
+    time { 30.m * task.attempt }
+    errorStrategy 'retry'
+    maxRetries 2
+
+    storeDir "${projectDir}/reference_data"
+
+    conda "${projectDir}/environment.yaml"
+
+    output:
+    path "Homo_sapiens.GRCh38.pfam_domains.tsv.gz"
+
+    script:
+    """
+    python3 ${projectDir}/code/scripts/download_interpro_domains.py --database pfam --output Homo_sapiens.GRCh38.pfam_domains.tsv.gz
+    """
+}
+
+process DOWNLOAD_INTERPRO_ENTRY_TYPES {
+
+    storeDir "${projectDir}/reference_data"
+
+    output:
+    path "interpro_90.0_entry.list"
+
+    // InterPro 90.0 is the release Ensembl 109's protein features were
+    // computed with (InterProScan 5.57-90.0).
+    script:
+    """
+    curl -fsSL -o interpro_90.0_entry.list https://ftp.ebi.ac.uk/pub/databases/interpro/releases/90.0/entry.list
+    """
+}
+
 process DOWNLOAD_GENES {
 
     // Room for loading reference files plus every gene in the batch
@@ -107,13 +143,16 @@ process DOWNLOAD_GENES {
     // Not referenced by name in the script below (it uses the
     // params.*_file paths directly), but declaring them as inputs
     // here makes this process wait on DOWNLOAD_GTF/DOWNLOAD_CDS_FASTA/
-    // DOWNLOAD_UNIPROT_MAPPING/DOWNLOAD_INTERPRO_DOMAINS actually
+    // DOWNLOAD_UNIPROT_MAPPING/DOWNLOAD_INTERPRO_DOMAINS/
+    // DOWNLOAD_PFAM_DOMAINS/DOWNLOAD_INTERPRO_ENTRY_TYPES actually
     // finishing (or cache-hitting via storeDir) before it runs, instead
     // of racing them.
     path gtf_file
     path cds_fasta_file
     path uniprot_mapping_file
     path interpro_domains_file
+    path pfam_domains_file
+    path interpro_entry_types_file
 
     output:
     path "${gene_batch[0]}_batch.tsv", emit: results
@@ -122,7 +161,7 @@ process DOWNLOAD_GENES {
     script:
     """
     printf "%s\n" ${gene_batch.join(' ')} > genes.txt
-    download_gene.py ${params.keep_overlapping_domains ? '--keepoverlappingdomains' : ''} ${params.identical_only ? '--identicalonly' : ''} --matchmode ${params.match_mode} -d ${params.domains} --genesfile genes.txt --genetimeout ${params.gene_timeout} --output ${gene_batch[0]}_batch.tsv --donefile ${gene_batch[0]}_batch.done -b ${params.ppi_binding_site_file} -c ${params.cds_fasta_file} -u ${params.uniprot_mapping_file} -g ${params.gtf_file} -p ${params.interpro_domains_file}
+    download_gene.py ${params.keep_overlapping_domains ? '--keepoverlappingdomains' : ''} ${params.identical_only ? '--identicalonly' : ''} --matchmode ${params.match_mode} -d ${params.domains} --genesfile genes.txt --genetimeout ${params.gene_timeout} --output ${gene_batch[0]}_batch.tsv --donefile ${gene_batch[0]}_batch.done -b ${params.ppi_binding_site_file} -c ${params.cds_fasta_file} -u ${params.uniprot_mapping_file} -g ${params.gtf_file} -p ${params.interpro_domains_file} -P ${params.pfam_domains_file} -T ${params.interpro_entry_types_file}
     """
 }
 
@@ -196,9 +235,12 @@ workflow {
     cds_fasta_file = DOWNLOAD_CDS_FASTA()
     uniprot_mapping_file = DOWNLOAD_UNIPROT_MAPPING()
     interpro_domains_file = DOWNLOAD_INTERPRO_DOMAINS()
+    pfam_domains_file = DOWNLOAD_PFAM_DOMAINS()
+    interpro_entry_types_file = DOWNLOAD_INTERPRO_ENTRY_TYPES()
 
     gene_outputs = DOWNLOAD_GENES(genes.collate(params.batch_size), gtf_file, cds_fasta_file,
-                                  uniprot_mapping_file, interpro_domains_file)
+                                  uniprot_mapping_file, interpro_domains_file,
+                                  pfam_domains_file, interpro_entry_types_file)
 
     // Failed genes = every gene not listed in some batch's .done file
     // (covers genes skipped inside a batch and whole batches that failed).

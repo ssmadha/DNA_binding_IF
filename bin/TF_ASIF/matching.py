@@ -107,15 +107,17 @@ def choose_source_transcripts(gene_id, transcript_ids, uniprot_xrefs, accessions
 
 
 def collect_domains(gene, superisoform, domain_filter, ppi_binding_site_file=None,
-                    interpro_domains_file=None, uniprot_mapping_file=None, gtf_file=None):
+                    interpro_domains_file=None, uniprot_mapping_file=None, gtf_file=None,
+                    pfam_domains_file=None, interpro_entry_types_file=None):
     """
     Gather a gene's classified domains, each paired with the transcript
     whose protein coordinates it is defined in: InterPro domains on
     their own Ensembl protein (for every transcript in the
     superisoform), PPI binding sites on their UniProt accession's
-    source transcript (see choose_source_transcripts). Only domains
-    classified as DNA-binding or PPI are kept, as in
-    Gene.check_domain_redundancy.
+    source transcript (see choose_source_transcripts). Only InterPro
+    domains of a requested classification are kept: DNA-binding for
+    "dbi", PPI for "ppi_domain" (a domain of both types is kept under
+    either, and reports both).
 
     Parameters
     ----------
@@ -125,7 +127,7 @@ def collect_domains(gene, superisoform, domain_filter, ppi_binding_site_file=Non
         Any of "ppi_domain", "dbi" (InterPro domains) and "ppi_bs"
         (PPI binding sites).
     ppi_binding_site_file, interpro_domains_file, uniprot_mapping_file,
-    gtf_file: str
+    gtf_file, pfam_domains_file, interpro_entry_types_file: str
         Reference files, as for Gene.
 
     Returns
@@ -135,13 +137,16 @@ def collect_domains(gene, superisoform, domain_filter, ppi_binding_site_file=Non
     """
     transcript_ids = list(superisoform.transcript_segments)
     items = []
-    if "ppi_domain" in domain_filter or "dbi" in domain_filter:
+    wanted_types = ({"DNA-binding"} if "dbi" in domain_filter else set()) | \
+                   ({"PPI"} if "ppi_domain" in domain_filter else set())
+    if wanted_types:
         protein_ids = {isoform["id"]: isoform["protein_id"]
                        for isoform in gene._get_gtf_index(gtf_file).get(gene.ensg_id, [])}
-        interpro_domains = Transcript._get_interpro_domains(interpro_domains_file)
         for transcript_id in transcript_ids:
-            for domain_id, positions, source in interpro_domains.get(protein_ids.get(transcript_id), []):
-                items.append((Domain.from_positions_string(domain_id, positions, source), transcript_id))
+            for domain in Transcript.interpro_domain_objects(protein_ids.get(transcript_id), interpro_domains_file,
+                                                             pfam_domains_file, interpro_entry_types_file):
+                if wanted_types & set(domain.types):
+                    items.append((domain, transcript_id))
     if "ppi_bs" in domain_filter:
         if ppi_binding_site_file is None:
             raise ValueError("Need ppi_binding_site_file if using PPI binding site")
@@ -154,8 +159,7 @@ def collect_domains(gene, superisoform, domain_filter, ppi_binding_site_file=Non
                 domain = Domain.from_positions_string(domain_id, positions, source)
                 domain.types = ["PPI"]
                 items.append((domain, transcript_id))
-    return [(domain, source) for domain, source in items
-            if "DNA-binding" in domain.types or "PPI" in domain.types]
+    return items
 
 
 def map_domain(gene_id, domain, source_transcript_id, superisoform):
@@ -193,11 +197,17 @@ def _merge_overlapping(mapped):
     down to the largest in each overlapping group - the same greedy
     procedure as Gene.check_domain_redundancy, but comparing exact
     codon bases instead of protein start/end positions (which aren't
-    comparable across transcripts).
+    comparable across transcripts). A domain of both types kept in the
+    DNA-binding pass also represents its residues in the PPI pass, so
+    PPI domains overlapping it are dropped rather than kept as a second
+    domain on the same residues.
     """
     keeping = []
     for classification in ["DNA-binding", "PPI"]:
-        queue = [entry for entry in mapped if classification in entry[0].types]
+        kept_bases = [{base for codon in entry[2] for base in codon}
+                      for entry in keeping if classification in entry[0].types]
+        queue = [entry for entry in mapped if classification in entry[0].types
+                 and not any({base for codon in entry[2] for base in codon} & bases for bases in kept_bases)]
         while queue:
             current = queue.pop()
             current_bases = {base for codon in current[2] for base in codon}
@@ -215,7 +225,8 @@ def _merge_overlapping(mapped):
 
 def segment_coverage_rows(gene, superisoform, domain_filter, merge_overlapping=True,
                           ppi_binding_site_file=None, interpro_domains_file=None,
-                          uniprot_mapping_file=None, gtf_file=None):
+                          uniprot_mapping_file=None, gtf_file=None,
+                          pfam_domains_file=None, interpro_entry_types_file=None):
     """
     Score every transcript of a gene against every one of its domains:
     coverage is the fraction of the domain's residues whose exact codon
@@ -234,7 +245,7 @@ def segment_coverage_rows(gene, superisoform, domain_filter, merge_overlapping=T
         InterPro domain on several transcripts sharing its exons) are
         always collapsed.
     ppi_binding_site_file, interpro_domains_file, uniprot_mapping_file,
-    gtf_file: str
+    gtf_file, pfam_domains_file, interpro_entry_types_file: str
         Reference files, as for Gene.
 
     Returns
@@ -245,7 +256,8 @@ def segment_coverage_rows(gene, superisoform, domain_filter, merge_overlapping=T
     mapped = []
     seen = set()
     for domain, source in collect_domains(gene, superisoform, domain_filter, ppi_binding_site_file,
-                                          interpro_domains_file, uniprot_mapping_file, gtf_file):
+                                          interpro_domains_file, uniprot_mapping_file, gtf_file,
+                                          pfam_domains_file, interpro_entry_types_file):
         codons = map_domain(gene.ensg_id, domain, source, superisoform)
         key = (domain.domain_id, frozenset(codons))
         if key in seen:

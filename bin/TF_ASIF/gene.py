@@ -27,7 +27,7 @@ class Gene:
     def __init__(self, ensg_id: str, ppi_binding_site_file, cds_fasta_file, uniprot_mapping_file,
                  gtf_file, interpro_domains_file=None, biotype_filter=None, refmode="superisoform",
                  domain_filter=None, merge_overlapping_domains=True, identical_only=False,
-                 matchmode="segment"):
+                 matchmode="segment", pfam_domains_file=None, interpro_entry_types_file=None):
         """
         Constructor
 
@@ -62,6 +62,15 @@ class Gene:
         biotype_filter : list, optional
             Ensembl transcript biotypes to keep. Defaults to
             ['protein_coding'].
+        pfam_domains_file : str, optional
+            Path to a (optionally gzipped) Pfam hit TSV file in the
+            shared domain schema. Its hits of 3did families are the
+            evidence for classifying InterPro domains as PPI (see
+            Domain.determine_protein_interaction). Without it (and
+            interpro_entry_types_file), no InterPro domain is PPI.
+        interpro_entry_types_file : str, optional
+            Path to an InterPro entry.list file, giving each InterPro
+            entry's type (only some types can be PPI).
         refmode : str, optional
             Alignment mode only: reference used to align transcripts. "superisoform"
             generates a combined-exon reference sequence; any other
@@ -109,14 +118,17 @@ class Gene:
             self.coverage_rows = matching.segment_coverage_rows(
                 self, self.superisoform, domain_filter, merge_overlapping=merge_overlapping_domains,
                 ppi_binding_site_file=ppi_binding_site_file, interpro_domains_file=interpro_domains_file,
-                uniprot_mapping_file=uniprot_mapping_file, gtf_file=gtf_file)
+                uniprot_mapping_file=uniprot_mapping_file, gtf_file=gtf_file,
+                pfam_domains_file=pfam_domains_file, interpro_entry_types_file=interpro_entry_types_file)
             return
         # print("downloading transcripts")
         self.transcripts = self.download_transcripts(self.ensg_id, biotype_filter=biotype_filter,
                                                      domain_types=domain_filter, ppi_binding_site_file=ppi_binding_site_file,
                                                      cds_fasta_file=cds_fasta_file,
                                                      uniprot_mapping_file=uniprot_mapping_file, gtf_file=gtf_file,
-                                                     interpro_domains_file=interpro_domains_file)
+                                                     interpro_domains_file=interpro_domains_file,
+                                                     pfam_domains_file=pfam_domains_file,
+                                                     interpro_entry_types_file=interpro_entry_types_file)
         # print("checking redundancy")
         self.check_domain_redundancy(merge_overlapping=merge_overlapping_domains)
         # print("generating superisoform")
@@ -145,7 +157,8 @@ class Gene:
 
     def download_transcripts(self, ensg_id=None, biotype_filter=None, domain_types=None, ppi_binding_site_file=None,
                              cds_fasta_file=None, uniprot_mapping_file=None, gtf_file=None,
-                             interpro_domains_file=None):
+                             interpro_domains_file=None, pfam_domains_file=None,
+                             interpro_entry_types_file=None):
         """
         Look up this gene's isoforms in a local Ensembl GTF annotation
         file and build a Transcript object for each isoform that
@@ -184,6 +197,9 @@ class Gene:
             Path to a (optionally gzipped) local InterPro protein
             domain TSV file, passed through to each Transcript for
             SuperFamily/InterPro domain lookup.
+        pfam_domains_file, interpro_entry_types_file : str, optional
+            PPI evidence files, as for __init__, passed through to each
+            Transcript.
 
         Returns
         -------
@@ -212,7 +228,9 @@ class Gene:
             transcript = Transcript(self, isoform['id'], isoform['protein_id'], domain_types=domain_types,
                                     ppi_binding_site_file=ppi_binding_site_file,
                                     cds_fasta_file=cds_fasta_file, uniprot_mapping_file=uniprot_mapping_file,
-                                    interpro_domains_file=interpro_domains_file)
+                                    interpro_domains_file=interpro_domains_file,
+                                    pfam_domains_file=pfam_domains_file,
+                                    interpro_entry_types_file=interpro_entry_types_file)
             if transcript.uniprot_id is not None:
                 exon_lengths = gtf_cds_blocks.get(transcript.enst_id)
                 prot_seq = transcript.download_sequence()
@@ -486,8 +504,16 @@ class Gene:
         """
         if transcripts is None:
             transcripts = self.transcripts
+
+        def overlap(a, b):
+            return (a.start <= b.start <= a.end) or (a.start <= b.end <= a.end) or \
+                (a.start >= b.start and a.end <= b.end)
+
         keeping_domains = []
         for classification in ["DNA-binding", "PPI"]:
+            # A domain of both types kept in the DNA-binding pass already
+            # represents its residues here; don't keep a second domain on them.
+            kept = [domain for domain in keeping_domains if classification in domain.types]
             domain_queue = []
             for transcript in transcripts:
                 if transcript.uniprot_id is None:
@@ -495,6 +521,8 @@ class Gene:
                 for domain in transcript.domains:
                     if classification in domain.types:
                         domain.prot_id = transcript.ensp_id
+                        if merge_overlapping and any(overlap(domain, other) for other in kept):
+                            continue
                         domain_queue.append(domain)
             # print("domain_queue:")
             # print(domain_queue)
@@ -503,16 +531,14 @@ class Gene:
                 if merge_overlapping:
                     removeList = []
                     for i, domain in enumerate(domain_queue):
-                        if (currDomain.start <= domain.start <= currDomain.end) or \
-                                (currDomain.start <= domain.end <= currDomain.end) or \
-                                (currDomain.start >= domain.start and
-                                 currDomain.end <= domain.end):
+                        if overlap(currDomain, domain):
                             if currDomain.end - currDomain.start < domain.end - domain.start:
                                 currDomain = domain
                             removeList.append(i)
                     for i in removeList[-1::-1]:
                         del domain_queue[i]
-                keeping_domains.append(currDomain)
+                if currDomain not in keeping_domains:
+                    keeping_domains.append(currDomain)
         # print("keeping_domains:")
         # print(keeping_domains)
         for transcript in self.transcripts:

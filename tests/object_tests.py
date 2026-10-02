@@ -4,7 +4,7 @@ from Bio.SeqFeature import SimpleLocation
 
 import bin.TF_ASIF.gene as gene
 from bin.TF_ASIF.transcript import Transcript
-from bin.TF_ASIF.domain import Domain
+from bin.TF_ASIF.domain import Domain, load_ppi_pfam_families
 from bin.TF_ASIF.superisoform import Superisoform
 from bin.TF_ASIF import matching
 from Bio.Seq import Seq
@@ -211,6 +211,98 @@ class TestDomainPositions(unittest.TestCase):
     def test_lone_residue_is_one_residue_long(self):
         domain = Domain.from_positions_string("X", "171,246-247", "bc")
         self.assertEqual([len(part) for part in domain.pos.parts], [1, 2])
+
+
+class TestProteinInteraction(unittest.TestCase):
+    def test_half_of_both_overlapping_is_ppi(self):
+        # Domain (49, 100), 51 residues, and hit (74, 150), 76 residues, share 26: half of
+        # the domain but not of the hit. Hit (60, 110), 50 residues, shares 40: half of both.
+        domain = Domain.from_positions_string("IPR1", "50-100", "SuperFamily",
+                                              ppi_regions={"PF1": [(74, 150)], "PF2": [(60, 110)]},
+                                              entry_type="Domain")
+        self.assertIn("PPI", domain.types)
+
+    def test_one_residue_overlap_is_not_ppi(self):
+        domain = Domain.from_positions_string("IPR1", "50-100", "SuperFamily",
+                                              ppi_regions={"PF1": [(99, 150)]}, entry_type="Domain")
+        self.assertNotIn("PPI", domain.types)
+
+    def test_small_hit_inside_large_domain_is_not_ppi(self):
+        # The hit is fully inside the domain, but covers under half of it.
+        domain = Domain.from_positions_string("IPR1", "1-300", "SuperFamily",
+                                              ppi_regions={"PF1": [(100, 160)]}, entry_type="Domain")
+        self.assertNotIn("PPI", domain.types)
+
+    def test_small_domain_inside_large_hit_is_not_ppi(self):
+        domain = Domain.from_positions_string("IPR1", "101-130", "SuperFamily",
+                                              ppi_regions={"PF1": [(0, 300)]}, entry_type="Domain")
+        self.assertNotIn("PPI", domain.types)
+
+    def test_hits_of_one_family_are_pooled(self):
+        # Domain (157, 208), 51 residues, over two 23-residue hits: each alone covers
+        # under half of it, together 46 residues.
+        hits = [(157, 180), (185, 208)]
+        domain = Domain.from_positions_string("IPR1", "158-208", "SuperFamily",
+                                              ppi_regions={"PF1": hits}, entry_type="Domain")
+        self.assertIn("PPI", domain.types)
+        domain = Domain.from_positions_string("IPR1", "158-208", "SuperFamily",
+                                              ppi_regions={"PF1": hits[:1], "PF2": hits[1:]},
+                                              entry_type="Domain")
+        self.assertNotIn("PPI", domain.types)
+
+    def test_only_touching_hits_are_pooled(self):
+        # A far-away hit of the same family doesn't count against the hit side.
+        domain = Domain.from_positions_string("IPR1", "158-208", "SuperFamily",
+                                              ppi_regions={"PF1": [(157, 180), (185, 208), (500, 900)]},
+                                              entry_type="Domain")
+        self.assertIn("PPI", domain.types)
+
+    def test_adjacent_pfam_hit_is_not_ppi(self):
+        # "50-100" is residues 49-99 0-based half-open; a hit starting at 100 doesn't touch it.
+        domain = Domain.from_positions_string("IPR1", "50-100", "SuperFamily",
+                                              ppi_regions={"PF1": [(100, 150)]}, entry_type="Domain")
+        self.assertNotIn("PPI", domain.types)
+
+    def test_family_entries_never_ppi(self):
+        domain = Domain.from_positions_string("IPR1", "100-150", "SuperFamily",
+                                              ppi_regions={"PF1": [(99, 150)]}, entry_type="Family")
+        self.assertNotIn("PPI", domain.types)
+
+    def test_no_evidence_is_not_ppi(self):
+        domain = Domain.from_positions_string("IPR1", "50-100", "SuperFamily", entry_type="Domain")
+        self.assertEqual(domain.types, [])
+
+    def test_compound_domain_uses_its_parts(self):
+        # The hit falls in the gap between the two parts.
+        domain = Domain.from_positions_string("S1", "10-20,40-50", "bc",
+                                              ppi_regions={"PF1": [(25, 35)]}, entry_type="Domain")
+        self.assertNotIn("PPI", domain.types)
+        # Hit 9-50 (41) shares both parts (22 residues): half of each, the gap not counted.
+        domain = Domain.from_positions_string("S1", "10-20,40-50", "bc",
+                                              ppi_regions={"PF1": [(9, 50)]}, entry_type="Domain")
+        self.assertIn("PPI", domain.types)
+
+    def test_3did_pairs_file_parsed(self):
+        families = load_ppi_pfam_families()
+        self.assertIn("PF10417", families)
+        self.assertNotIn(" PF10417", families)
+
+    def test_dbd_kept_once_with_both_types(self):
+        # TP53: the DNA-binding domain is also PPI, and the overlapping
+        # PPI-only superfamily entry (IPR012346) is not kept on top of it;
+        # the whole-protein family entry (IPR002117) is not PPI.
+        reference_data = "reference_data/"
+        test_gene = gene.Gene("ENSG00000141510", reference_data + "ppi_binding_sites.tsv",
+                              reference_data + "Homo_sapiens.GRCh38.cds.all.fa.gz",
+                              reference_data + "Homo_sapiens.GRCh38.109.uniprot.tsv.gz",
+                              reference_data + "Homo_sapiens.GRCh38.109.gtf.gz",
+                              reference_data + "Homo_sapiens.GRCh38.interpro_domains.tsv.gz",
+                              pfam_domains_file=reference_data + "Homo_sapiens.GRCh38.pfam_domains.tsv.gz",
+                              interpro_entry_types_file=reference_data + "interpro_90.0_entry.list")
+        types = {(row["domain_id"], row["domain_type"]) for row in test_gene.coverage_rows}
+        self.assertIn(("IPR008967", "DNA-binding;PPI"), types)
+        self.assertNotIn("IPR012346", {domain_id for domain_id, _ in types})
+        self.assertNotIn("IPR002117", {domain_id for domain_id, _ in types})
 
 
 class TestSegmentMatching(unittest.TestCase):

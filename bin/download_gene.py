@@ -53,6 +53,12 @@ def get_args():
                             help="Ensembl GTF annotation file, used to list this gene's isoforms")
     getoptions.add_argument("-p", "--interprodomainsfile",
                             help="Local InterPro protein domain TSV file, used for SuperFamily/InterPro domain lookup")
+    getoptions.add_argument("-P", "--pfamdomainsfile",
+                            help="Local Pfam hit TSV file; hits of 3did families are the evidence for PPI domains. \
+                                  Required with -d ppi_domain.")
+    getoptions.add_argument("-T", "--interproentrytypesfile",
+                            help="InterPro entry.list file (entry types); only Domain, Homologous_superfamily and \
+                                  Repeat entries can be PPI domains. Required with -d ppi_domain.")
     getoptions.add_argument("-o", "--keepoverlappingdomains",
                             action="store_true",
                             help="Keep every classified domain from every transcript as-is, without collapsing \
@@ -73,6 +79,8 @@ def get_args():
     args = getoptions.parse_args()
     if not args.ensgid and not args.genesfile:
         getoptions.error("give at least one --ensgid or a --genesfile")
+    if "ppi_domain" in args.domains and not (args.pfamdomainsfile and args.interproentrytypesfile):
+        getoptions.error("-d ppi_domain needs --pfamdomainsfile and --interproentrytypesfile")
     return args
 
 
@@ -92,6 +100,9 @@ def preload_reference_files(args):
     gene.Gene._get_gtf_index(args.gtffile)
     if "ppi_domain" in args.domains or "dbi" in args.domains:
         Transcript._get_interpro_domains(args.interprodomainsfile)
+    if "ppi_domain" in args.domains:
+        Transcript._get_ppi_regions(args.pfamdomainsfile)
+        Transcript._get_interpro_entry_types(args.interproentrytypesfile)
     if "ppi_bs" in args.domains:
         Transcript._get_ppi_binding_sites(args.ppibindingsitefile)
     if args.matchmode == "segment":
@@ -126,6 +137,8 @@ if __name__ == "__main__":
             test_gene = gene.Gene(gene_id, ppi_binding_site_file=args.ppibindingsitefile,
                                   cds_fasta_file=args.cdsfastafile, uniprot_mapping_file=args.uniprotmappingfile,
                                   gtf_file=args.gtffile, interpro_domains_file=args.interprodomainsfile,
+                                  pfam_domains_file=args.pfamdomainsfile,
+                                  interpro_entry_types_file=args.interproentrytypesfile,
                                   refmode=args.refmode, domain_filter=args.domains,
                                   merge_overlapping_domains=not args.keepoverlappingdomains,
                                   identical_only=args.identicalonly, matchmode=args.matchmode)

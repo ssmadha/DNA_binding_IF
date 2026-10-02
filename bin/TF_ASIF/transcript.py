@@ -4,7 +4,7 @@ import warnings
 import pandas as pd
 from Bio import Align, SeqIO
 
-from .domain import Domain
+from .domain import Domain, load_ppi_pfam_families
 
 
 class Transcript:
@@ -21,10 +21,13 @@ class Transcript:
     _uniprot_mapping = None
     _interpro_domains = None
     _ppi_binding_sites = None
+    _ppi_regions = None
+    _interpro_entry_types = None
 
     def __init__(self, gene, enst_id: str, ensp_id: str, domain_types: list,
                  cds_fasta_file: str = None, uniprot_mapping_file: str = None,
-                 interpro_domains_file: str = None, ppi_binding_site_file: str = None):
+                 interpro_domains_file: str = None, ppi_binding_site_file: str = None,
+                 pfam_domains_file: str = None, interpro_entry_types_file: str = None):
         """
         Constructor
 
@@ -53,6 +56,9 @@ class Transcript:
             interpro_domains_file, keyed by UniProt ID instead of
             Ensembl Protein ID), used by yue_ppi_locations when
             "ppi_bs" is in domain_types.
+        pfam_domains_file, interpro_entry_types_file: str, optional
+            Evidence for classifying InterPro domains as PPI; see
+            interpro_domain_objects.
         """
         self.gene = gene
         self.enst_id = enst_id
@@ -61,6 +67,8 @@ class Transcript:
         self.uniprot_mapping_file = uniprot_mapping_file
         self.interpro_domains_file = interpro_domains_file
         self.ppi_binding_site_file = ppi_binding_site_file
+        self.pfam_domains_file = pfam_domains_file
+        self.interpro_entry_types_file = interpro_entry_types_file
         # print("Ensembl ID: " + self.enst_id)
         self.uniprot_id = self.get_uniprot_id()
         # print("UniProt ID: " + str(self.uniprot_id))
@@ -266,6 +274,96 @@ class Transcript:
             cls._ppi_binding_sites = cls._load_domain_reference_file(ppi_binding_site_file)
         return cls._ppi_binding_sites
 
+    @classmethod
+    def _get_ppi_regions(cls, pfam_domains_file):
+        """
+        Load and cache, for each Ensembl Protein ID, the spans of its
+        Pfam hits whose family is in 3did (see
+        domain.load_ppi_pfam_families), grouped by Pfam family. The file
+        is only parsed once per process; subsequent calls reuse the
+        cache.
+
+        Parameters
+        ----------
+        pfam_domains_file: str
+            Path to a (optionally gzipped) Pfam hit TSV file in the
+            shared domain schema (Homo_sapiens.GRCh38.pfam_domains.tsv.gz).
+
+        Returns
+        -------
+        dict[str, dict[str, list[tuple[int, int]]]]
+            Per protein, 0-based half-open (start, end) hit spans per
+            Pfam accession.
+        """
+        if cls._ppi_regions is None:
+            families = load_ppi_pfam_families()
+            cls._ppi_regions = {}
+            for protein_id, hits in cls._load_domain_reference_file(pfam_domains_file).items():
+                regions = {}
+                for pfam_id, positions, _ in hits:
+                    if pfam_id not in families:
+                        continue
+                    location = Domain.from_positions_string(pfam_id, positions, "Pfam").pos
+                    regions.setdefault(pfam_id, []).extend(
+                        (int(part.start), int(part.end)) for part in location.parts)
+                if regions:
+                    cls._ppi_regions[protein_id] = regions
+        return cls._ppi_regions
+
+    @classmethod
+    def _get_interpro_entry_types(cls, interpro_entry_types_file):
+        """
+        Load and cache the type (Domain, Family, Homologous_superfamily,
+        ...) of every InterPro entry from an InterPro entry.list file
+        (columns ENTRY_AC, ENTRY_TYPE, ENTRY_NAME).
+
+        Parameters
+        ----------
+        interpro_entry_types_file: str
+            Path to an InterPro entry.list file.
+
+        Returns
+        -------
+        dict[str, str]
+            InterPro accession -> entry type.
+        """
+        if cls._interpro_entry_types is None:
+            entries_df = pd.read_csv(interpro_entry_types_file, sep='\t')
+            cls._interpro_entry_types = dict(zip(entries_df["ENTRY_AC"], entries_df["ENTRY_TYPE"]))
+        return cls._interpro_entry_types
+
+    @classmethod
+    def interpro_domain_objects(cls, ensp_id, interpro_domains_file,
+                                pfam_domains_file=None, interpro_entry_types_file=None):
+        """
+        Build the classified InterPro domains of one Ensembl protein.
+
+        Parameters
+        ----------
+        ensp_id: str
+            Ensembl Protein ID.
+        interpro_domains_file: str
+            See _get_interpro_domains.
+        pfam_domains_file, interpro_entry_types_file: str, optional
+            See _get_ppi_regions and _get_interpro_entry_types. Both are
+            needed to classify domains as PPI; if neither is given, no
+            domain is PPI.
+
+        Returns
+        -------
+        list[Domain]
+        """
+        if (pfam_domains_file is None) != (interpro_entry_types_file is None):
+            raise ValueError("PPI domain classification needs both pfam_domains_file "
+                             "and interpro_entry_types_file")
+        ppi_regions, entry_types = None, {}
+        if pfam_domains_file is not None:
+            ppi_regions = cls._get_ppi_regions(pfam_domains_file).get(ensp_id)
+            entry_types = cls._get_interpro_entry_types(interpro_entry_types_file)
+        return [Domain.from_positions_string(domain_id, positions, source, ppi_regions=ppi_regions,
+                                             entry_type=entry_types.get(domain_id))
+                for domain_id, positions, source in cls._get_interpro_domains(interpro_domains_file).get(ensp_id, [])]
+
     def download_domains(self, ensp_id=None, domain_types=None,
                          interpro_domains_file=None, ppi_binding_site_file=None):
         """
@@ -278,9 +376,10 @@ class Transcript:
         ensp_id : str, optional
             Ensembl Protein ID. Defaults to self.ensp_id.
         domain_types : list, optional
-            Domain types to include. "ppi_domain" or "dbi" look up
+            Domain types to include. "dbi" and "ppi_domain" look up
             SuperFamily/InterPro domains in a local InterPro protein
-            domain file; "ppi_bs" fetches PPI binding sites via
+            domain file, keeping those classified DNA-binding and PPI
+            respectively; "ppi_bs" fetches PPI binding sites via
             yue_ppi_locations. Defaults to ["ppi_domain", "dbi"].
         interpro_domains_file : str, optional
             Path to a (optionally gzipped) local InterPro protein
@@ -304,10 +403,12 @@ class Transcript:
             interpro_domains_file = self.interpro_domains_file
         if ppi_binding_site_file is None:
             ppi_binding_site_file = self.ppi_binding_site_file
-        if "ppi_domain" in domain_types or "dbi" in domain_types:
-            interpro_domains = self._get_interpro_domains(interpro_domains_file)
-            domains += [Domain.from_positions_string(domain_id, positions, source)
-                        for domain_id, positions, source in interpro_domains.get(ensp_id, [])]
+        wanted_types = ({"DNA-binding"} if "dbi" in domain_types else set()) | \
+                       ({"PPI"} if "ppi_domain" in domain_types else set())
+        if wanted_types:
+            domains += [domain for domain in self.interpro_domain_objects(
+                            ensp_id, interpro_domains_file, self.pfam_domains_file, self.interpro_entry_types_file)
+                        if wanted_types & set(domain.types)]
         if "ppi_bs" in domain_types:
             if ppi_binding_site_file is None:
                 raise ValueError("Need ppi_binding_site_file if using PPI binding site")
