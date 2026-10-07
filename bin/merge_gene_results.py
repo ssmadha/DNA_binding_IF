@@ -2,7 +2,7 @@
 """
 Merge per-gene download_gene.py outputs into one TSV.
 
-Current per-gene outputs (ENSG*.tsv) are already TSVs with a header (see
+Current per-gene or per-batch outputs (*.tsv) are already TSVs with a header (see
 TF_ASIF.matching.COVERAGE_COLUMNS: one row per transcript and domain);
 they are concatenated under a single header.
 
@@ -80,7 +80,7 @@ def get_args():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-i", "--input-dir", required=True,
-                        help="Directory of per-gene output files (ENSG*.tsv, or ENSG*.txt from older runs)")
+                        help="Directory of per-gene/batch output files (*.tsv, or ENSG*.txt from older runs)")
     parser.add_argument("-o", "--output", required=True,
                         help="Path to write the merged TSV to")
     parser.add_argument("--keep-empty", action="store_true",
@@ -117,15 +117,18 @@ def merge_tsv_files(gene_files, output):
 
 if __name__ == "__main__":
     args = get_args()
-    tsv_files = sorted(glob.glob(os.path.join(args.input_dir, "ENSG*.tsv")))
+    # Any .tsv, not just ENSG*.tsv: batch files are named after their
+    # first gene list entry, which needn't be an Ensembl ID (e.g.
+    # DUX1_HUMAN_batch.tsv); mismatched headers are still rejected.
+    tsv_files = sorted(glob.glob(os.path.join(args.input_dir, "*.tsv")))
     gene_files = sorted(glob.glob(os.path.join(args.input_dir, "ENSG*.txt")))
     if tsv_files and gene_files:
-        sys.exit("Found both ENSG*.tsv and older ENSG*.txt outputs in " + args.input_dir + "; merge them separately")
+        sys.exit("Found both .tsv and older ENSG*.txt outputs in " + args.input_dir + "; merge them separately")
     if tsv_files:
         merge_tsv_files(tsv_files, args.output)
         sys.exit(0)
     if not gene_files:
-        print("WARNING: no ENSG*.tsv or ENSG*.txt files found in " + args.input_dir, file=sys.stderr)
+        print("WARNING: no .tsv or ENSG*.txt files found in " + args.input_dir, file=sys.stderr)
         with open(args.output, "w") as out:
             out.write("\t".join(COVERAGE_COLUMNS) + "\n")
         sys.exit(0)
