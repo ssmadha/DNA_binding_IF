@@ -25,5 +25,9 @@
 /reference_data/Homo_sapiens.GRCh38.pfam_domains.tsv.gz
 /reference_data/interpro_90.0_entry.list
 
+# Built from HPA transcript_rna_tissue.tsv by
+# code/scripts/make_hpa_expression_table.py.
+/reference_data/hpa_transcript_tissue_relative_to_max_TPM.tsv
+
 # Python bytecode caches
 __pycache__/
