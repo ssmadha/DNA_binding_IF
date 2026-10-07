@@ -9,6 +9,7 @@ from bin.TF_ASIF.superisoform import Superisoform
 from bin.TF_ASIF import matching
 from bin import compute_asif
 from Bio.Seq import Seq
+import numpy as np
 import pandas as pd
 
 
@@ -375,6 +376,39 @@ class TestComputeAsif(unittest.TestCase):
     def test_legacy_results_have_no_type_columns(self):
         results = pd.DataFrame({"gene_id": ["G"], "transcript_id": ["T1"], "coverage": [0.5]})
         self.assertNotIn("ppi_coverage", compute_asif.to_per_transcript(results).columns)
+
+    def test_full_coverage_is_fully_functional(self):
+        self.assertEqual(compute_asif.domain_retained(1.0, 17.0, 0.965), 1.0)
+        # Below full coverage the plain sigmoid applies, without rescaling.
+        self.assertAlmostEqual(compute_asif.domain_retained(0.99, 17.0, 0.965),
+                               1 / (1 + np.exp(-17.0 * (0.99 - 0.965))))
+        self.assertLess(compute_asif.domain_retained(0.5, 48.8, 0.958), 1e-9)
+
+    def test_parameters_chosen_by_domain_type(self):
+        self.assertEqual(compute_asif.parameter_type("DNA-binding", "ppi"), "dna_binding")
+        self.assertEqual(compute_asif.parameter_type("PPI", "dna_binding"), "ppi")
+        self.assertEqual(compute_asif.parameter_type("DNA-binding;PPI", "dna_binding"), "dna_binding")
+        self.assertEqual(compute_asif.parameter_type("DNA-binding;PPI", "ppi"), "ppi")
+        self.assertEqual(compute_asif.parameter_type("", "ppi"), "ppi")
+
+    def test_impact_factor_uses_each_domain_types_parameters(self):
+        # beta = coverage, so each domain keeps exactly 0.5 under its own
+        # type's parameters and ~0 under the other's.
+        params = {"dna_binding": (200, 0.6), "ppi": (200, 0.8)}
+        results = pd.DataFrame({
+            "gene_id": ["G"] * 4,
+            "transcript_id": ["T1", "T1", "T2", "T3"],
+            "domain_type": ["DNA-binding", "PPI", "DNA-binding;PPI", "PPI"],
+            "coverage": [0.6, 0.8, 0.6, 1.0],
+        })
+        expression = pd.DataFrame({"gene_id": ["G"] * 3, "transcript_id": ["T1", "T2", "T3"],
+                                   "liver_TPM": [10.0, 10.0, 10.0]})
+        asif = compute_asif.compute_asif(results, expression, params, both_type="dna_binding").set_index("transcript_id")
+        self.assertAlmostEqual(asif.loc["T1", "liver_asif"], 10 * (1 - 0.5))
+        self.assertAlmostEqual(asif.loc["T2", "liver_asif"], 10 * (1 - 0.5))
+        self.assertAlmostEqual(asif.loc["T3", "liver_asif"], 0.0)
+        asif = compute_asif.compute_asif(results, expression, params, both_type="ppi").set_index("transcript_id")
+        self.assertAlmostEqual(asif.loc["T2", "liver_asif"], 10.0, places=5)
 
 
 class TestGene(unittest.TestCase):

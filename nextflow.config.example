@@ -24,8 +24,12 @@ params {
     identical_only = false
     match_mode = "segment"
     expression_files = "${projectDir}/expressed_coding_isoforms_with_relative_tpm_threshold_1.tsv"
-    // impact factor = 1 - mean(sigmoid(asif_alpha * (coverage - asif_beta))).
-    // 6 / 0.5 reproduces getTFIsoforms.ipynb's mean(sigmoid(6 * (1 - coverage) - 3)).
-    asif_alpha = 63
-    asif_beta = 0.3
+    // Per domain type: kept = 1 if fully covered, else sigmoid(alpha * (coverage - beta));
+    // impact factor = 1 - mean kept. Fitted by code/scripts/fit_asif_sigmoid.py -x.
+    asif_dna_binding_alpha = 48.8
+    asif_dna_binding_beta = 0.958
+    asif_ppi_alpha = 17.0
+    asif_ppi_beta = 0.965
+    // Parameters for domains of both types (or no recorded type): "dna_binding" or "ppi".
+    asif_both_type = "dna_binding"
 }

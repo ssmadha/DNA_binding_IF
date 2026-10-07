@@ -22,9 +22,17 @@ params.match_mode = "segment"
 // Comma-separated transcript expression TSV(s) (gene_id, transcript_id,
 // <tissue>_TPM, ...); one ASIF table is written per file. Unset skips ASIF.
 params.expression_files = null
-// ASIF impact factor = 1 - mean(sigmoid(alpha * (coverage - beta))).
-params.asif_alpha = 63
-params.asif_beta = 0.3
+// ASIF impact factor = 1 - mean over domains of kept(coverage), where
+// kept = 1 for a fully covered domain, else sigmoid(alpha * (coverage - beta)),
+// with alpha/beta per domain type (fitted by code/scripts/fit_asif_sigmoid.py
+// -x). Domains of both types, or with no recorded type (alignment mode), use
+// the asif_both_type parameters.
+params.asif_dna_binding_alpha = 48.8
+params.asif_dna_binding_beta = 0.958
+params.asif_ppi_alpha = 17.0
+params.asif_ppi_beta = 0.965
+// "dna_binding" or "ppi"
+params.asif_both_type = "dna_binding"
 
 process DOWNLOAD_GTF {
 
@@ -198,7 +206,10 @@ process COMPUTE_ASIF {
 
     script:
     """
-    compute_asif.py --results ${all_results} --expression ${expression_file} --alpha ${params.asif_alpha} --beta ${params.asif_beta} --output ${expression_file.baseName}_ASIF.tsv
+    compute_asif.py --results ${all_results} --expression ${expression_file} \\
+        --dna-binding-alpha ${params.asif_dna_binding_alpha} --dna-binding-beta ${params.asif_dna_binding_beta} \\
+        --ppi-alpha ${params.asif_ppi_alpha} --ppi-beta ${params.asif_ppi_beta} \\
+        --both-type ${params.asif_both_type} --output ${expression_file.baseName}_ASIF.tsv
     """
 }
 
