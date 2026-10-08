@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
@@ -216,5 +218,8 @@ ax_venn.text(
 
 plt.tight_layout()
 
-plt.savefig("Figure_2_b.png")
+output_dir = "ASIF_PPI_Figures"
+os.makedirs(output_dir, exist_ok=True)
+
+plt.savefig(os.path.join(output_dir, "Figure_2_b.png"))
 plt.show()
