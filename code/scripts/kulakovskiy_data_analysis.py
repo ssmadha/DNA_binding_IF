@@ -1,12 +1,35 @@
+import gzip
+import json
+import os
+import re
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import pickle
 from scipy.stats import pearsonr, gaussian_kde, binomtest, kruskal, mannwhitneyu, chi2_contingency
 from statsmodels.stats.multitest import multipletests
 
 #don't automatically show the plots
 plt.ioff()
+
+# Transcript-level ASIF from the TF pipeline run (DNA-binding + PPI domains,
+# fitted per-type sigmoid, HPA expression relative to the gene's top transcript)
+asif_file = "results_tf_dbi_ppi_fitted/hpa_transcript_tissue_relative_to_max_TPM_ASIF.tsv"
+# Gene names come from the same Ensembl GTF the pipeline uses
+gtf_file = "reference_data/Homo_sapiens.GRCh38.109.gtf.gz"
+
+output_dir = "kulakovskiy_data/results_tf_dbi_ppi_fitted"
+for subdir in ["corr_graphs_bymotif", "corr_graphs_DBD"] + [
+    f"corr_graphs_bymotif/Category{i}" for i in range(1, 7)
+]:
+    os.makedirs(os.path.join(output_dir, subdir), exist_ok=True)
+
+# Statistics are printed and also written to this file
+stats_file = open(f"{output_dir}/statistics.txt", "w")
+
+def report(text=""):
+    print(text)
+    stats_file.write(f"{text}\n")
 
 maradoner_df = pd.read_table("kulakovskiy_data/MARAdoner_activities.tsv", index_col=0)
 maradoner_df = maradoner_df.set_index(maradoner_df.index.map(lambda x: x.split(".")[0]), append=True)
@@ -21,70 +44,54 @@ for i in motif_info.index:
     motif_families[this_rep_motif] = family_members
 
 
-asif_df = pd.read_table("visualization/asif/ASIF.csv", sep=",", index_col=[0, 1])
+pipeline_df = pd.read_table(asif_file)
 
-asif_DBD = pickle.load(open("dbd_impact_factors1.pickle", "rb"))
-asif_DBD_df = pd.DataFrame.from_dict(asif_DBD, orient="index")
-gene_map = (
-    asif_df.index.to_frame(index=False)
-    .drop_duplicates(subset="Gene ID")
-    .set_index("Gene ID")["Gene Name"]
-)
+gene_map = {}
+with gzip.open(gtf_file, "rt") as handle:
+    for line in handle:
+        fields = line.split("\t")
+        if len(fields) > 8 and fields[2] == "gene":
+            gene_id = re.search(r'gene_id "([^"]+)"', fields[8]).group(1)
+            name = re.search(r'gene_name "([^"]+)"', fields[8])
+            if name:
+                gene_map[gene_id] = name.group(1)
 
-# Add Gene ID column to the new dataframe
-asif_DBD_df["Gene Name"] = asif_DBD_df.index.map(gene_map)
+pipeline_df["Gene Name"] = pipeline_df["gene_id"].map(gene_map)
+pipeline_df = pipeline_df.rename(columns={"gene_id": "Gene ID", "transcript_id": "Transcript ID"})
 
-# Make a MultiIndex
-asif_DBD_df = (
-    asif_DBD_df
-    .reset_index(names="Gene ID")
-    .set_index(["Gene ID", "Gene Name"])
-)
-
-asif_transcript = pickle.load(open("rel_impact_factors1.pickle", "rb"))
-
-asif_rows = []
-exp_rows = []
-
-for gene_id, transcripts in asif_transcript.items():
-    for transcript_id, tissues in transcripts.items():
-        asif_row = {
-            "Gene ID": gene_id,
-            "Transcript ID": transcript_id
-        }
-        exp_row = {
-            "Gene ID": gene_id,
-            "Transcript ID": transcript_id
-        }
-
-        for tissue, (asif_value, exp_value) in tissues.items():
-            asif_row[tissue] = asif_value
-            exp_row[tissue] = exp_value
-
-        asif_rows.append(asif_row)
-        exp_rows.append(exp_row)
+# Per-tissue ASIF and relative expression, with the suffixes stripped so the
+# columns are plain tissue names
+asif_columns = {col: col[:-len("_asif")] for col in pipeline_df.columns if col.endswith("_asif")}
+exp_columns = {col: col[:-len("_tpm")] for col in pipeline_df.columns if col.endswith("_tpm")}
 
 asif_transcript_df = (
-    pd.DataFrame(asif_rows)
-      .set_index(["Gene ID", "Transcript ID"])
-      .sort_index()
+    pipeline_df
+    .set_index(["Gene ID", "Transcript ID", "Gene Name"])[list(asif_columns)]
+    .rename(columns=asif_columns)
+    .sort_index()
 )
 
 exp_transcript_df = (
-    pd.DataFrame(exp_rows)
-      .set_index(["Gene ID", "Transcript ID"])
-      .sort_index()
+    pipeline_df
+    .set_index(["Gene ID", "Transcript ID"])[list(exp_columns)]
+    .rename(columns=exp_columns)
+    .sort_index()
 )
 
-# Add Gene ID column to the new dataframe
-asif_transcript_df["Gene Name"] = asif_transcript_df.index.get_level_values("Gene ID").map(gene_map)
+# Gene-level ASIF: the highest transcript ASIF in each tissue
+asif_df = asif_transcript_df.groupby(level=["Gene ID", "Gene Name"]).max()
 
-# Make a MultiIndex
-asif_transcript_df = (
-    asif_transcript_df
-    .reset_index(names=["Gene ID", "Transcript ID"])
-    .set_index(["Gene ID", "Transcript ID", "Gene Name"])
-)
+# DNA binding lost per transcript: 1 - mean coverage of its DNA-binding
+# domains (NaN for transcripts without one)
+DNA_binding_lost = {}
+for gene_id, transcript_id, coverage_str in zip(
+    pipeline_df["Gene ID"],
+    pipeline_df["Transcript ID"],
+    pipeline_df["dna_binding_coverage"]
+):
+    coverages = json.loads(coverage_str)
+    if coverages:
+        DNA_binding_lost.setdefault(gene_id, {})[transcript_id] = 1 - np.mean(coverages)
 
 common_columns = {"breast": "breast_adult",
                   "epididymis": "epididymis_adult",
@@ -219,6 +226,11 @@ for rep_motif, family_members in motif_families.items():
             #         label=transcript_id
             #     )
 
+    # No family gene has ASIF values (e.g. the AP-2 family), nothing to plot
+    if max_x == float("-inf"):
+        plt.close()
+        continue
+
     plt.xlabel("ASIF")
     plt.ylabel("Maradoner")
     plt.title(rep_motif)
@@ -277,9 +289,9 @@ for rep_motif, family_members in motif_families.items():
         corrs6[rep_motif] = corr
 
     # Save plot
-    plt.savefig(f"kulakovskiy_data/corr_graphs_bymotif/{save_folder}{rep_motif}_scatter.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"{output_dir}/corr_graphs_bymotif/{save_folder}{rep_motif}_scatter.png", dpi=300, bbox_inches="tight")
 
-    plt.savefig(f"kulakovskiy_data/corr_graphs_bymotif/{rep_motif}_scatter.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"{output_dir}/corr_graphs_bymotif/{rep_motif}_scatter.png", dpi=300, bbox_inches="tight")
 
     plt.close()
 
@@ -298,7 +310,6 @@ for rep_motif, family_members in motif_families.items():
 
     # if -2 < y.mean() < 2:
     #     continue
-
     for family_gene in family_members:
         #print(family_gene)
         mask_asif = (
@@ -320,18 +331,20 @@ for rep_motif, family_members in motif_families.items():
         x_no_zero = x_valid[no_zero]
         y_no_zero = y_valid[no_zero]
 
-    if len(x_no_zero) < 2:
-        continue
+        if len(x_no_zero) < 2:
+            continue
 
-    plt.scatter(
-        x_valid,
-        y_valid,
-        label=f"{family_gene}"
-    )
+        plt.scatter(
+            x_valid,
+            y_valid,
+            label=f"{family_gene}",
+            color="grey"
+        )
 
 plt.xlabel("ASIF")
 plt.ylabel("MARADONER")
 plt.tight_layout()
+plt.savefig(f"{output_dir}/ASIF_vs_MARADONER_scatter.png", dpi=300, bbox_inches="tight")
 plt.show()
 
 plt.close()
@@ -423,6 +436,7 @@ plt.ylabel("MARADONER")
 plt.title("ASIF vs MARADONER point density")
 
 plt.tight_layout()
+plt.savefig(f"{output_dir}/ASIF_vs_MARADONER_density.png", dpi=300, bbox_inches="tight")
 plt.show()
 
 rows = []
@@ -512,9 +526,6 @@ for rep_motif, family_members in motif_families.items():
 
 combined_df = pd.DataFrame(rows)
 
-with open("DNA_binding_lost.pickle", "rb") as handle:
-    DNA_binding_lost = pickle.load(handle)
-
 combined_df["DNA_binding_lost"] = combined_df.apply(
     lambda row: DNA_binding_lost
         .get(row["Gene ID"], {})
@@ -522,7 +533,7 @@ combined_df["DNA_binding_lost"] = combined_df.apply(
     axis=1
 )
 
-combined_df.to_csv("Maradoner_ASIF_table.tsv", sep="\t", index=False)
+combined_df.to_csv(f"{output_dir}/Maradoner_ASIF_table.tsv", sep="\t", index=False)
 
 subset_near_zero = combined_df[
     combined_df["Maradoner"].between(-2, 2, inclusive="neither")
@@ -546,9 +557,11 @@ result = binomtest(
     alternative="two-sided"
 )
 
-print(f"High ASIF: {high}")
-print(f"Low ASIF: {low}")
-print(f"p-value: {result.pvalue:.4g}")
+report("Near-zero MARADONER (-2 to 2): ASIF_MAX >= 0.5 vs < 0.5, binomial test")
+report(f"High ASIF: {high}")
+report(f"Low ASIF: {low}")
+report(f"p-value: {result.pvalue:.4g}")
+report()
 
 subset_far_zero = combined_df[
     ~combined_df["Maradoner"].between(-2, 2, )
@@ -560,14 +573,16 @@ subset_far_zero["ASIF_category"] = np.where(
     "Low ASIF"
 )
 
-print(subset_far_zero["ASIF_category"].value_counts())
+report("MARADONER outside -2 to 2: ASIF_MAX >= 0.5 vs < 0.5")
+report(subset_far_zero["ASIF_category"].value_counts().to_string())
+report()
 
 subset = combined_df.dropna(subset=["Maradoner", "ASIF_MAX"]).copy()
 
 subset["Maradoner_bin"] = pd.cut(
     subset["Maradoner"],
-    bins=[-np.inf, -5, -2, 0, 2, 5, np.inf],
-    labels=["< -5", "-5 to -2", "-2 to 0", "0 to 2", "2 to 5", "> 5"]
+    bins=[-np.inf, -5, -2, 2, 5, np.inf],
+    labels=["< -5", "-5 to -2", "-2 to 2", "2 to 5", "> 5"]
 )
 
 summary = (
@@ -589,13 +604,14 @@ summary["pct_above_0_8"] = (
     summary["above_0_8"] / summary["count"] * 100
 )
 
-print(summary)
+report("ASIF_MAX by MARADONER bin")
+report(summary.to_string())
+report()
 
 bin_order = [
     "< -5",
     "-5 to -2",
-    "-2 to 0",
-    "0 to 2",
+    "-2 to 2",
     "2 to 5",
     "> 5"
 ]
@@ -614,7 +630,8 @@ plt.figure(figsize=(9, 6))
 plt.boxplot(
     box_data,
     tick_labels=bin_order,
-    showfliers=False
+    showfliers=False,
+    orientation="horizontal"
 )
 
 # Add jittered individual observations
@@ -626,19 +643,20 @@ for i, values in enumerate(box_data, start=1):
     )
 
     plt.scatter(
-        jitter,
         values,
+        jitter,
         alpha=0.25,
         s=12
     )
 
-plt.ylim(0, 1)
+plt.xlim(0, 1)
 
-plt.xlabel("Maradoner score")
-plt.ylabel("ASIF")
+plt.xlabel("ASIF")
+plt.ylabel("Maradoner score")
 plt.title("ASIF distribution across Maradoner score ranges")
 
 plt.tight_layout()
+plt.savefig(f"{output_dir}/ASIF_by_MARADONER_bin_boxplot.png", dpi=300, bbox_inches="tight")
 plt.show()
 
 # Get ASIF values for each Maradoner bin
@@ -680,6 +698,7 @@ plt.ylabel("ASIF")
 plt.title("ASIF distribution across Maradoner score ranges")
 
 plt.tight_layout()
+plt.savefig(f"{output_dir}/ASIF_by_MARADONER_bin_violin.png", dpi=300, bbox_inches="tight")
 plt.show()
 
 # Data for each group
@@ -703,9 +722,10 @@ groups = {
 
 kw_stat, kw_p = kruskal(*groups.values())
 
-print("Kruskal-Wallis test")
-print(f"H = {kw_stat:.3f}")
-print(f"p = {kw_p:.4g}")
+report("Kruskal-Wallis test")
+report(f"H = {kw_stat:.3f}")
+report(f"p = {kw_p:.4g}")
+report()
 
 
 # --------------------------------------------------
@@ -753,7 +773,9 @@ results_df["p_adj"] = multipletests(
 
 results_df["Significant"] = results_df["p_adj"] < 0.05
 
-print(results_df)
+report("Pairwise Mann-Whitney U tests (BH FDR)")
+report(results_df.to_string())
+report()
 
 # --------------------------------------------------
 # Chi^2 test
@@ -772,21 +794,36 @@ contingency = pd.crosstab(
     subset["ASIF_category"]
 )
 
-print(contingency)
+report("Chi-square test: MARADONER bin x ASIF category")
+report(contingency.to_string())
 
 chi2, p, dof, expected = chi2_contingency(contingency)
 
-print(f"Chi-square = {chi2:.3f}")
-print(f"Degrees of freedom = {dof}")
-print(f"p-value = {p:.4g}")
+report(f"Chi-square = {chi2:.3f}")
+report(f"Degrees of freedom = {dof}")
+report(f"p-value = {p:.4g}")
+report()
 
-print(np.array(list(corrs.values())).mean())
+report("Mean Pearson r, ASIF vs MARADONER")
 
-unique_motifs = motif_info.loc[motif_info["Cluster_Size"]<2, "Representative_Motif"].map(lambda x: x.split(".")[0]).tolist()
+def print_mean_r(name, rs):
+    # Genes with ASIF constant across tissues (e.g. 0 everywhere) give r = NaN
+    rs = np.array(list(rs), dtype=float)
+    report(f"{name}: mean r = {np.nanmean(rs):.3f} (n = {np.isfinite(rs).sum()} of {len(rs)} with a defined r)")
 
-unique_corrs = {str(gene): corrs[gene] for gene in unique_motifs if gene in common_genes}
 
-print(np.array(list(unique_corrs.values())).mean())
+print_mean_r("All motif-gene pairs", (c["r"] for c in corrs.values()))
+
+unique_motifs = motif_info.loc[motif_info["Cluster_Size"]<2, "Representative_Motif"].tolist()
+
+# corrs is keyed by (motif, gene); single-gene motifs are named after their gene
+unique_corrs = {
+    motif.split(".")[0]: corrs[(motif, motif.split(".")[0])]["r"]
+    for motif in unique_motifs
+    if motif.split(".")[0] in common_genes and (motif, motif.split(".")[0]) in corrs
+}
+
+print_mean_r("Single-gene motifs", unique_corrs.values())
 
 
 asif_DBD_df_common = asif_df.loc[pd.IndexSlice[:, common_genes], common_columns.keys()]
@@ -818,15 +855,17 @@ for gene in common_genes:
     plt.tight_layout()
 
     # Save plot
-    plt.savefig(f"kulakovskiy_data/corr_graphs_DBD/{gene}_scatter.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"{output_dir}/corr_graphs_DBD/{gene}_scatter.png", dpi=300, bbox_inches="tight")
 
     plt.close()
 
 
-print(np.array(list(corrs_DBD.values())).mean())
+print_mean_r("Genes with their own motif", corrs_DBD.values())
 
 unique_motifs = motif_info.loc[motif_info["Cluster_Size"]<2, "Representative_Motif"].map(lambda x: x.split(".")[0]).tolist()
 
 unique_corrs_DBD = {str(gene): corrs_DBD[gene] for gene in unique_motifs if gene in common_genes}
 
-print(np.array(list(unique_corrs_DBD.values())).mean())
+print_mean_r("Genes with their own single-gene motif", unique_corrs_DBD.values())
+
+stats_file.close()
