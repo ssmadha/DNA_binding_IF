@@ -7,8 +7,8 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import cmcrameri.cm as cmc
-from matplotlib.colors import ListedColormap
-from sklearn.cluster import KMeans
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 
 # ============================================================
 # Settings
@@ -20,17 +20,25 @@ NODE_DEGREE_CUTOFF = 50
 # drawn from all genes regardless of node degree
 TOP_ASIF_GENES = 50
 
-# Third figure: all genes, k-means clustered (genes and tissues), with k
-# chosen by the elbow method over these ranges
-GENE_K_VALUES = range(3, 50)
-TISSUE_K_VALUES = range(2, 21)
-KMEANS_SEED = 0
-# Leave the lowest-ASIF gene cluster (mostly ASIF ~ 0) out of the heatmap;
-# clustering and the cluster tables still use all genes
-DROP_LOWEST_GENE_CLUSTER = True
-# Square heatmap tiles: side length in inches, and output resolution
-TILE_INCHES = 0.1
-KMEANS_DPI = 100
+# Third figure: representative genes. "High" is ASIF >= HIGH_ASIF and
+# "low" is ASIF < LOW_ASIF; each pattern contributes PER_PATTERN genes,
+# chosen at random, and the rest of the RANDOM_GENES are drawn from all
+# other genes
+HIGH_ASIF = 0.8
+LOW_ASIF = 0.2
+FEW_TISSUES = (2, 5)
+BROAD_MIN_TISSUES = 36
+PER_PATTERN = 4
+RANDOM_GENES = 8
+REPRESENTATIVE_SEED = 42
+
+FONT_SIZE = 14
+plt.rcParams["font.size"] = FONT_SIZE
+# Tissue names, and node-degree values and axis
+TISSUE_FONT_SIZE = 17
+DEGREE_FONT_SIZE = 16
+# Shorter display names for some tissues
+TISSUE_LABELS = {"parathyroid gland": "parathyroid"}
 
 
 # ============================================================
@@ -39,7 +47,9 @@ KMEANS_DPI = 100
 
 ppi_file = "results_segment_ppi/expressed_coding_isoforms_with_relative_tpm_threshold_1_ASIF.tsv"
 degree_file = "node_degree_df.tsv"
-mapping_file = "mane_select_with_uniprot_id_mapping2.csv"
+# Gene -> UniProt accessions, from the same Ensembl 109 xref file the
+# pipeline uses (every protein of the gene, not only the MANE Select one)
+mapping_file = "reference_data/Homo_sapiens.GRCh38.109.uniprot.tsv.gz"
 # Gene names (row labels) come from the same Ensembl GTF the pipeline uses
 gtf_file = "reference_data/Homo_sapiens.GRCh38.109.gtf.gz"
 
@@ -53,19 +63,19 @@ os.makedirs(output_dir, exist_ok=True)
 
 ppi_df = pd.read_csv(ppi_file, sep="\t")
 degree_df = pd.read_csv(degree_file, sep="\t")
-mapping_df = pd.read_csv(mapping_file)
+mapping_df = pd.read_csv(mapping_file, sep="\t")
 
 
 # ============================================================
 # 2. Map UniProt protein IDs -> Ensembl gene IDs
 # ============================================================
 
-mapping_filtered = mapping_df[
-    ["gene_mane", "transcript_mane", "uniprot"]
-].copy()
-
-mapping_filtered = mapping_filtered.dropna(
-    subset=["uniprot"]
+# One row per (gene, accession); an accession can belong to several
+# genes (e.g. identical paralogs) and a gene to several accessions
+mapping_filtered = (
+    mapping_df[["gene_stable_id", "xref"]]
+    .rename(columns={"gene_stable_id": "gene_id", "xref": "uniprot"})
+    .drop_duplicates()
 )
 
 degree_all_mapped = degree_df[
@@ -77,10 +87,10 @@ degree_all_mapped = degree_df[
     how="inner"
 )
 
-# Node degree per gene, for every mapped gene
+# Node degree per gene (highest over its accessions), for every mapped gene
 gene_degree_all = (
     degree_all_mapped
-    .groupby("gene_mane")["node_degree"]
+    .groupby("gene_id")["node_degree"]
     .max()
 )
 
@@ -100,7 +110,8 @@ print(
 
 print(
     f"Proteins successfully mapped to Ensembl: "
-    f"{len(degree_mapped)}"
+    f"{degree_mapped['protein'].nunique()} "
+    f"({degree_mapped['gene_id'].nunique()} genes)"
 )
 
 
@@ -125,7 +136,7 @@ print(
 
 ppi_filtered = ppi_df[
     ppi_df["gene_id"].isin(
-        degree_mapped["gene_mane"]
+        degree_mapped["gene_id"]
     )
 ].copy()
 
@@ -167,7 +178,7 @@ heatmap_df.columns = [
 
 gene_degree = (
     degree_mapped
-    .groupby("gene_mane")["node_degree"]
+    .groupby("gene_id")["node_degree"]
     .max()
 )
 
@@ -231,13 +242,14 @@ def gene_labels(gene_ids):
     return labels.values
 
 
-def plot_asif_heatmap(heatmap_values, node_degree, title, output_file):
+def plot_asif_heatmap(heatmap_values, node_degree, output_file):
     """ASIF heatmap (genes x tissues) with node-degree bars on the right.
 
     heatmap_values is indexed by Ensembl gene ID; node_degree is aligned
     to it and may be NaN for genes without a node degree (no bar drawn).
+    The ASIF colorbar is saved separately as <output_file>_colorbar.png.
     """
-    heatmap_values = heatmap_values.copy()
+    heatmap_values = heatmap_values.rename(columns=TISSUE_LABELS)
     heatmap_values.index = gene_labels(heatmap_values.index)
 
     # ========================================================
@@ -254,7 +266,7 @@ def plot_asif_heatmap(heatmap_values, node_degree, title, output_file):
         nrows=1,
         ncols=2,
         width_ratios=[16, 3],
-        wspace=0
+        wspace=0.02
     )
 
     ax_heatmap = fig.add_subplot(gs[0])
@@ -272,17 +284,16 @@ def plot_asif_heatmap(heatmap_values, node_degree, title, output_file):
         vmax=1,
         xticklabels=True,
         yticklabels=True,
-        cbar_kws={"label": "ASIF"}
+        cbar=False
     )
 
-    ax_heatmap.set_xlabel("Tissue")
+    ax_heatmap.set_xlabel("")
     ax_heatmap.set_ylabel("")
-
-    ax_heatmap.set_title(title)
 
     ax_heatmap.tick_params(
         axis="x",
-        rotation=90
+        rotation=90,
+        labelsize=TISSUE_FONT_SIZE
     )
 
     # ========================================================
@@ -309,9 +320,7 @@ def plot_asif_heatmap(heatmap_values, node_degree, title, output_file):
     # Remove y-axis
     ax_degree.set_yticks([])
     ax_degree.set_ylabel("")
-
-    ax_degree.set_xlabel("Node degree")
-    ax_degree.set_title("Node degree")
+    ax_degree.tick_params(axis="x", labelsize=DEGREE_FONT_SIZE)
 
     # ========================================================
     # 13. Add node-degree values
@@ -330,13 +339,13 @@ def plot_asif_heatmap(heatmap_values, node_degree, title, output_file):
             "n/a" if np.isnan(value) else f"{int(value)}",
             va="center",
             ha="left",
-            fontsize=8
+            fontsize=DEGREE_FONT_SIZE
         )
 
     # Give the labels some room
     ax_degree.set_xlim(
         0,
-        max_degree * 1.15
+        max_degree * 1.35
     )
 
     # ========================================================
@@ -350,14 +359,29 @@ def plot_asif_heatmap(heatmap_values, node_degree, title, output_file):
     )
     plt.close(fig)
 
+    # ========================================================
+    # 15. ASIF colorbar, saved on its own
+    # ========================================================
+
+    fig, ax_cbar = plt.subplots(figsize=(0.4, 4))
+    colorbar = fig.colorbar(
+        ScalarMappable(norm=Normalize(vmin=0, vmax=1), cmap=cmc.batlow),
+        cax=ax_cbar
+    )
+    fig.savefig(
+        os.path.join(
+            output_dir,
+            output_file.replace(".png", "_colorbar.png")
+        ),
+        dpi=300,
+        bbox_inches="tight"
+    )
+    plt.close(fig)
+
 
 plot_asif_heatmap(
     heatmap_values,
     node_degree,
-    title=(
-        f"ASIF for Proteins with Node Degree ≥ "
-        f"{NODE_DEGREE_CUTOFF}"
-    ),
     output_file=(
         f"PPI_ASIF_node_degree_"
         f"{NODE_DEGREE_CUTOFF}_heatmap.png"
@@ -400,232 +424,67 @@ print(
 plot_asif_heatmap(
     top_values,
     top_degree,
-    title=(
-        f"ASIF for the {TOP_ASIF_GENES} Genes with the "
-        f"Highest Mean ASIF Across Tissues"
-    ),
     output_file=f"PPI_ASIF_top_{TOP_ASIF_GENES}_mean_heatmap.png"
 )
 
 
 # ============================================================
-# 16. All genes, k-means clustered (elbow method)
+# 16. Representative genes
 # ============================================================
 
-def elbow_kmeans(values, k_values, name):
-    """Fit k-means for each k, pick the elbow, and save the elbow plot.
+n_high = (all_gene_asif >= HIGH_ASIF).sum(axis=1)
+n_low = (all_gene_asif < LOW_ASIF).sum(axis=1)
+n_tissues = all_gene_asif.shape[1]
 
-    The elbow is the k whose (k, inertia) point lies farthest from the
-    straight line joining the first and last points of the curve, with
-    both axes scaled to 0-1. Returns the k-means fit at the elbow.
-    """
-    fits = {
-        k: KMeans(n_clusters=k, n_init=10, random_state=KMEANS_SEED).fit(values)
-        for k in k_values
-    }
-    ks = np.array(list(fits))
-    inertias = np.array([fits[k].inertia_ for k in ks])
+# High in the given number of tissues and low in all the others
+patterns = {
+    "one tissue": (n_high == 1) & (n_high + n_low == n_tissues),
+    "few tissues": (
+        n_high.between(*FEW_TISSUES) & (n_high + n_low == n_tissues)
+    ),
+    "across the board": n_high >= BROAD_MIN_TISSUES,
+}
 
-    x = (ks - ks[0]) / (ks[-1] - ks[0])
-    y = (inertias - inertias[-1]) / (inertias[0] - inertias[-1])
-    # Distance from the line y = 1 - x
-    distances = np.abs(x + y - 1) / np.sqrt(2)
-    best_k = int(ks[np.argmax(distances)])
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.plot(ks, inertias, marker="o", linestyle="-")
-    ax.axvline(best_k, color="grey", linestyle="--")
-    ax.annotate(
-        f"k = {best_k}",
-        xy=(best_k, fits[best_k].inertia_),
-        xytext=(8, 8),
-        textcoords="offset points"
+rng = np.random.default_rng(REPRESENTATIVE_SEED)
+chosen = []
+for pattern, is_pattern in patterns.items():
+    candidates = all_gene_asif.index[is_pattern]
+    picked = rng.choice(
+        candidates,
+        size=min(PER_PATTERN, len(candidates)),
+        replace=False
     )
-    ax.set_title(f"Elbow Plot ({name})")
-    ax.set_xlabel("Number of Clusters (k)")
-    ax.set_ylabel("Distortion (Inertia)")
-    ax.grid(True)
-    fig.savefig(
-        os.path.join(output_dir, f"PPI_ASIF_kmeans_elbow_{name}.png"),
-        dpi=300,
-        bbox_inches="tight"
-    )
-    plt.close(fig)
+    print(f"Representative genes, {pattern}: {len(picked)} of {len(candidates)}")
+    chosen += [(gene_id, pattern) for gene_id in picked]
 
-    print(f"Elbow for {name}: k = {best_k}")
-    return fits[best_k]
+already_chosen = {gene_id for gene_id, _ in chosen}
+remaining = [g for g in all_gene_asif.index if g not in already_chosen]
+picked = rng.choice(remaining, size=RANDOM_GENES, replace=False)
+chosen += [(gene_id, "random") for gene_id in picked]
 
-
-def cluster_order(values, labels):
-    """Order clusters by mean ASIF (highest first), members likewise."""
-    values = pd.DataFrame(values)
-    row_mean = values.mean(axis=1).to_numpy()
-    cluster_means = pd.Series(row_mean).groupby(labels).mean()
-    rank = cluster_means.rank(ascending=False, method="first").astype(int) - 1
-    cluster_rank = rank.loc[labels].to_numpy()
-    order = np.lexsort((-row_mean, cluster_rank))
-    return order, cluster_rank
-
-
-gene_kmeans = elbow_kmeans(all_gene_asif.to_numpy(), GENE_K_VALUES, "genes")
-tissue_kmeans = elbow_kmeans(all_gene_asif.T.to_numpy(), TISSUE_K_VALUES, "tissues")
-
-gene_order, gene_clusters = cluster_order(
-    all_gene_asif.to_numpy(), gene_kmeans.labels_
+# Rows in order of increasing mean ASIF across tissues
+representative = pd.DataFrame(chosen, columns=["gene_id", "pattern"])
+representative["gene_name"] = representative["gene_id"].map(gene_names)
+representative["n_tissues_high"] = representative["gene_id"].map(n_high)
+representative["mean_asif"] = representative["gene_id"].map(mean_asif)
+representative = representative.sort_values(
+    "mean_asif", ascending=True, kind="stable"
 )
-tissue_order, tissue_clusters = cluster_order(
-    all_gene_asif.T.to_numpy(), tissue_kmeans.labels_
-)
-
-clustered_values = all_gene_asif.iloc[gene_order, tissue_order]
-
-# Cluster assignments, in figure order (clusters numbered from the top)
-pd.DataFrame({
-    "gene_id": clustered_values.index,
-    "gene_name": [gene_names.get(g, g) for g in clustered_values.index],
-    "cluster": gene_clusters[gene_order] + 1,
-    "mean_asif": clustered_values.mean(axis=1).round(4).values,
-}).to_csv(
-    os.path.join(output_dir, "PPI_ASIF_kmeans_gene_clusters.tsv"),
-    sep="\t",
-    index=False
-)
-pd.DataFrame({
-    "tissue": clustered_values.columns,
-    "cluster": tissue_clusters[tissue_order] + 1,
-}).to_csv(
-    os.path.join(output_dir, "PPI_ASIF_kmeans_tissue_clusters.tsv"),
+representative["mean_asif"] = representative["mean_asif"].round(4)
+representative.to_csv(
+    os.path.join(output_dir, "PPI_ASIF_representative_genes.tsv"),
     sep="\t",
     index=False
 )
 
-
-def cluster_cmap(n_clusters):
-    """Categorical colours for cluster strips (tab20, then tab20b)."""
-    colors = list(plt.get_cmap("tab20").colors) + list(plt.get_cmap("tab20b").colors)
-    return ListedColormap([colors[i % len(colors)] for i in range(n_clusters)])
-
-
-n_gene_clusters = gene_kmeans.n_clusters
-n_tissue_clusters = tissue_kmeans.n_clusters
-
-ordered_gene_clusters = gene_clusters[gene_order]
-shown_genes = np.ones(len(gene_order), dtype=bool)
-if DROP_LOWEST_GENE_CLUSTER:
-    # Clusters are ranked by mean ASIF, so the last one is the lowest
-    shown_genes = ordered_gene_clusters != n_gene_clusters - 1
-
-shown_values = clustered_values.to_numpy()[shown_genes]
-shown_gene_clusters = ordered_gene_clusters[shown_genes]
-n_rows, n_cols = shown_values.shape
-
-print(
-    f"k-means heatmap: {n_rows:,} of {len(gene_order):,} genes"
-    + (" (lowest cluster left out)" if DROP_LOWEST_GENE_CLUSTER else "")
+representative_genes = pd.Index(representative["gene_id"])
+plot_asif_heatmap(
+    all_gene_asif.loc[representative_genes],
+    pd.Series(
+        representative_genes.map(gene_degree_all),
+        index=representative_genes
+    ),
+    output_file="PPI_ASIF_representative_heatmap.png"
 )
-
-# Lay the axes out in inches so every heatmap tile is TILE_INCHES square
-strip = 3 * TILE_INCHES
-gap = TILE_INCHES
-margin = 1.5
-heatmap_w = n_cols * TILE_INCHES
-heatmap_h = n_rows * TILE_INCHES
-cbar_h = 0.12
-
-fig_w = margin + strip + gap + heatmap_w + margin
-fig_h = margin + heatmap_h + gap + strip + margin + cbar_h + 0.8
-
-fig = plt.figure(figsize=(fig_w, fig_h))
-
-
-def add_axes_inches(left, bottom, width, height):
-    return fig.add_axes(
-        [left / fig_w, bottom / fig_h, width / fig_w, height / fig_h]
-    )
-
-
-heatmap_left = margin + strip + gap
-heatmap_bottom = margin
-tissue_strip_bottom = heatmap_bottom + heatmap_h + gap
-
-ax_heatmap = add_axes_inches(heatmap_left, heatmap_bottom, heatmap_w, heatmap_h)
-ax_gene_strip = add_axes_inches(margin, heatmap_bottom, strip, heatmap_h)
-ax_tissue_strip = add_axes_inches(heatmap_left, tissue_strip_bottom, heatmap_w, strip)
-ax_cbar = add_axes_inches(
-    heatmap_left, tissue_strip_bottom + strip + margin, heatmap_w, cbar_h
-)
-
-image = ax_heatmap.imshow(
-    shown_values,
-    aspect="auto",
-    interpolation="nearest",
-    cmap=cmc.batlow,
-    vmin=0,
-    vmax=1
-)
-ax_heatmap.set_xticks(range(n_cols))
-ax_heatmap.set_xticklabels(clustered_values.columns, rotation=90, fontsize=7)
-ax_heatmap.set_yticks([])
-ax_heatmap.set_xlabel("Tissue")
-
-colorbar = fig.colorbar(image, cax=ax_cbar, orientation="horizontal")
-colorbar.ax.xaxis.set_ticks_position("top")
-colorbar.ax.xaxis.set_label_position("top")
-colorbar.set_label("ASIF")
-colorbar.ax.tick_params(labelsize=7)
-
-# Gene cluster strip on the left, with cluster numbers
-ax_gene_strip.imshow(
-    shown_gene_clusters[:, None],
-    aspect="auto",
-    interpolation="nearest",
-    cmap=cluster_cmap(n_gene_clusters),
-    vmin=-0.5,
-    vmax=n_gene_clusters - 0.5
-)
-ax_gene_strip.set_xticks([])
-boundaries = np.flatnonzero(np.diff(shown_gene_clusters)) + 1
-starts = np.concatenate(([0], boundaries))
-ends = np.concatenate((boundaries, [n_rows]))
-ax_gene_strip.set_yticks((starts + ends - 1) / 2)
-ax_gene_strip.set_yticklabels(
-    [str(cluster + 1) for cluster in shown_gene_clusters[starts]],
-    fontsize=8
-)
-ax_gene_strip.set_ylabel(
-    f"Genes (n = {n_rows:,}), k-means clusters"
-)
-
-# Tissue cluster strip on top, with the tissue names above it
-ax_tissue_strip.imshow(
-    tissue_clusters[tissue_order][None, :],
-    aspect="auto",
-    interpolation="nearest",
-    cmap=cluster_cmap(n_tissue_clusters),
-    vmin=-0.5,
-    vmax=n_tissue_clusters - 0.5
-)
-ax_tissue_strip.set_yticks([])
-ax_tissue_strip.set_xticks(range(n_cols))
-ax_tissue_strip.set_xticklabels(clustered_values.columns, rotation=90, fontsize=7)
-ax_tissue_strip.xaxis.set_ticks_position("top")
-ax_tissue_strip.xaxis.set_label_position("top")
-
-fig.suptitle(
-    f"ASIF, k-means Clustered\n"
-    f"({n_gene_clusters} gene / {n_tissue_clusters} tissue clusters)",
-    x=(heatmap_left + heatmap_w / 2) / fig_w,
-    y=1 - 0.1 / fig_h,
-    va="top",
-    fontsize=10
-)
-
-for extension in ["png", "pdf"]:
-    fig.savefig(
-        os.path.join(output_dir, f"PPI_ASIF_all_genes_kmeans_heatmap.{extension}"),
-        dpi=KMEANS_DPI,
-        bbox_inches="tight"
-    )
-plt.close(fig)
 
 #plt.show()
