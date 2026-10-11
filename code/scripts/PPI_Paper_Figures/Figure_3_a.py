@@ -35,6 +35,8 @@ TISSUE_LABELS = {"parathyroid gland": "parathyroid"}
 # One heatmap per gene cluster, with gene names. The lowest-ASIF cluster
 # (7,639 genes, mostly ASIF ~ 0) is left out.
 PLOT_LOWEST_CLUSTER_ALONE = False
+# Each cluster is also plotted with only its top genes by mean ASIF
+CLUSTER_TOP_N = 20
 CLUSTER_ROW_INCHES = 0.15
 CLUSTER_GENE_FONT_SIZE = 10
 CLUSTER_FIG_WIDTH = 12
@@ -344,7 +346,8 @@ plt.close(fig)
 
 
 # ============================================================
-# 7. Each gene cluster on its own, with gene names
+# 7. Each gene cluster on its own (all genes and top CLUSTER_TOP_N), with
+#    gene names
 # ============================================================
 
 def gene_labels(gene_ids):
@@ -369,8 +372,8 @@ if not PLOT_LOWEST_CLUSTER_ALONE:
     # Clusters are ranked by mean ASIF, so the last one is the lowest
     clusters_to_plot = range(n_gene_clusters - 1)
 
-for cluster in clusters_to_plot:
-    cluster_values = clustered_values[ordered_gene_clusters == cluster]
+def plot_cluster_heatmap(cluster_values, file_stem):
+    """Heatmap of one gene cluster with gene names and the tissue strip."""
     n_cluster_genes = len(cluster_values)
 
     # Lay the axes out in inches: tissue strip on top, then one
@@ -416,14 +419,24 @@ for cluster in clusters_to_plot:
 
     # Tissue names add about 2 in above and below the heatmap
     dpi = min(CLUSTER_DPI, int(MAX_PNG_PIXELS / (fig_h + 4)))
-    file_stem = os.path.join(cluster_dir, f"PPI_ASIF_kmeans_cluster_{cluster + 1}")
     fig.savefig(f"{file_stem}.png", dpi=dpi, bbox_inches="tight")
     if fig_h + 4 <= MAX_PDF_INCHES:
         fig.savefig(f"{file_stem}.pdf", bbox_inches="tight")
     plt.close(fig)
 
     print(
-        f"Cluster {cluster + 1}: {n_cluster_genes:,} genes, "
+        f"{os.path.basename(file_stem)}: {n_cluster_genes:,} genes, "
         f"{fig_h + 4:.0f} in tall, PNG at {dpi} dpi"
         + ("" if fig_h + 4 <= MAX_PDF_INCHES else ", no PDF")
+    )
+
+
+for cluster in clusters_to_plot:
+    cluster_values = clustered_values[ordered_gene_clusters == cluster]
+    file_stem = os.path.join(cluster_dir, f"PPI_ASIF_kmeans_cluster_{cluster + 1}")
+    plot_cluster_heatmap(cluster_values, file_stem)
+    # Genes within a cluster are already ordered by decreasing mean ASIF
+    plot_cluster_heatmap(
+        cluster_values.head(CLUSTER_TOP_N),
+        f"{file_stem}_top{CLUSTER_TOP_N}"
     )
